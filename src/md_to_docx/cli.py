@@ -38,6 +38,67 @@ def main():
 @click.option("-f", "--overwrite", is_flag=True, default=False, help="Overwrite existing output file.")
 def convert(input_path: str, output_path: str | None, template_name: str, overwrite: bool):
     """Converts a Markdown file into a styled DOCX document."""
+    if input_path == "-":
+        if not output_path:
+            click.echo("Error: Output path (-o / --output) is required when reading from standard input.", err=True)
+            sys.exit(2)
+        out_file = Path(output_path).resolve()
+        if out_file.suffix.lower() == ".doc":
+            click.echo(
+                "Error: Word 97-2003 .doc is not supported. Use a .docx output path.",
+                err=True,
+            )
+            sys.exit(2)
+        if out_file.is_dir():
+            click.echo(f"Error: Output path '{out_file}' is a directory, not a regular file.", err=True)
+            sys.exit(2)
+        if out_file.parent.exists() and not os.access(out_file.parent, os.W_OK):
+            click.echo(f"Permission Error: Output directory '{out_file.parent}' is not writable.", err=True)
+            sys.exit(1)
+        if out_file.exists():
+            if not overwrite:
+                click.echo(
+                    f"Error: Output file '{out_file}' already exists. Use --overwrite (-f) to overwrite.",
+                    err=True,
+                )
+                sys.exit(2)
+            if not os.access(out_file, os.W_OK):
+                click.echo(f"Permission Error: Output file '{out_file}' is not writable.", err=True)
+                sys.exit(1)
+        try:
+            tmpl = Template.load(template_name)
+        except TemplateNotFoundError:
+            available = ", ".join(Template.list_available()) or "none found"
+            click.echo(
+                f"Error: Template '{template_name}' not found. Available templates: {available}",
+                err=True,
+            )
+            sys.exit(2)
+        except TemplateValidationError as e:
+            click.echo(f"Error: Invalid template configuration: {e}", err=True)
+            sys.exit(2)
+
+        content = sys.stdin.read()
+        try:
+            saved = convert_markdown_to_docx(
+                output_path=out_file,
+                content=content,
+                template=tmpl,
+                overwrite=overwrite,
+            )
+            click.echo(f"Success: Generated DOCX at '{saved}'")
+            return
+        except PermissionError as e:
+            click.echo(f"Permission Error: {e}", err=True)
+            sys.exit(1)
+        except ConvertError as e:
+            click.echo(f"Conversion Error: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            logging.getLogger(__name__).exception("Unexpected error in CLI conversion: %s", e)
+            click.echo(f"Unexpected Error: {e}\n{traceback.format_exc()}", err=True)
+            sys.exit(1)
+
     raw_in = Path(input_path)
     if raw_in.is_symlink() and not raw_in.exists():
         click.echo(f"Error: Input file '{input_path}' does not exist (broken symlink).", err=True)

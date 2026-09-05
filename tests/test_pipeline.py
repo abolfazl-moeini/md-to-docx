@@ -373,3 +373,12 @@ def test_pipeline_crash_during_publish_rolls_back_existing_files(tmp_path, mocke
     # No leftover staging or backup files
     staged = [p for p in tmp_path.iterdir() if p.name.startswith((".stage_", ".backup_", ".trash_"))]
     assert len(staged) == 0, f"No temporary or backup files should remain: {staged}"
+
+
+def test_pipeline_convert_with_content_string(tmp_path):
+    out_docx = tmp_path / "from_content.docx"
+    content = "# تیتر مستقیم\n\nاین یک پاراگراف آزمایشی است.\n"
+    res = convert_markdown_to_docx(content=content, output_path=out_docx, overwrite=True)
+    assert res.exists()
+    assert res.stat().st_size > 0
+

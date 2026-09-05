@@ -121,32 +121,49 @@ def _publish_diagrams(stage_media_dir: Path, target_media_dir: Path) -> None:
 
 
 def convert_markdown_to_docx(
-    input_path: str | Path,
-    output_path: str | Path,
+    input_path: Optional[str | Path] = None,
+    output_path: str | Path = "output.docx",
     template: str | Path | Template = "purple_book",
     render_mermaid_fn: Optional[Callable] = None,
     media_dir: Optional[str | Path] = None,
     overwrite: bool = True,
+    content: Optional[str] = None,
+    base_dir: Optional[str | Path] = None,
 ) -> Path:
     """
     Executes the full conversion pipeline from Markdown to styled DOCX.
+    Supports either an input file path (input_path) or raw markdown text (content).
     Uses staging directories for atomic publish (R-02) and cleans up on failure.
     Diagram images are persisted to media_dir (defaults to {output_stem}_media beside docx).
     """
-    in_file = Path(input_path).resolve()
-    if not in_file.exists():
-        raise FileNotFoundError(f"Input file '{input_path}' does not exist.")
-    if not in_file.is_file():
-        raise IsADirectoryError(f"Input path '{input_path}' is a directory, not a regular file.")
-    if not os.access(in_file, os.R_OK):
-        raise PermissionError(f"Permission denied: cannot read input file '{in_file}'.")
-
-    # Enforce maximum input size (R-11)
-    file_size = in_file.stat().st_size
-    if file_size > MAX_INPUT_SIZE_BYTES:
-        raise ConvertError(
-            f"Input file size ({file_size} bytes) exceeds maximum supported limit of {MAX_INPUT_SIZE_BYTES} bytes."
+    if content is not None:
+        raw_text = content
+        file_size = len(raw_text.encode("utf-8"))
+        if file_size > MAX_INPUT_SIZE_BYTES:
+            raise ConvertError(
+                f"Input content size ({file_size} bytes) exceeds maximum supported limit of {MAX_INPUT_SIZE_BYTES} bytes."
+            )
+        resolved_base = Path(base_dir).resolve() if base_dir else (
+            Path(input_path).parent.resolve() if input_path and str(input_path) != "-" else Path.cwd().resolve()
         )
+        in_file = resolved_base / ("input.md" if not input_path or str(input_path) == "-" else Path(input_path).name)
+    else:
+        if input_path is None:
+            raise ValueError("Either input_path or content must be provided.")
+        in_file = Path(input_path).resolve()
+        if not in_file.exists():
+            raise FileNotFoundError(f"Input file '{input_path}' does not exist.")
+        if not in_file.is_file():
+            raise IsADirectoryError(f"Input path '{input_path}' is a directory, not a regular file.")
+        if not os.access(in_file, os.R_OK):
+            raise PermissionError(f"Permission denied: cannot read input file '{in_file}'.")
+
+        file_size = in_file.stat().st_size
+        if file_size > MAX_INPUT_SIZE_BYTES:
+            raise ConvertError(
+                f"Input file size ({file_size} bytes) exceeds maximum supported limit of {MAX_INPUT_SIZE_BYTES} bytes."
+            )
+        raw_text = in_file.read_text(encoding="utf-8")
 
     out_file = Path(output_path).resolve()
     if out_file == in_file:
@@ -169,8 +186,6 @@ def convert_markdown_to_docx(
         tmpl = template
     else:
         tmpl = Template.load(template)
-
-    raw_text = in_file.read_text(encoding="utf-8")
 
     # 2. Stage conversion in an isolated temporary directory (R-02 / R-04)
     # Prefer staging within the same filesystem as out_file for atomic os.replace

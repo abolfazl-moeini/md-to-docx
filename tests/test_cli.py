@@ -196,4 +196,19 @@ def test_cli_convert_unexpected_error_shows_traceback(runner, tmp_path, mocker):
     assert "Traceback" in result.output
 
 
+def test_cli_convert_stdin_requires_output(runner):
+    result = runner.invoke(main, ["convert", "-"], input="# Test")
+    assert result.exit_code == 2
+    assert "Output path (-o / --output) is required" in result.output
+
+
+def test_cli_convert_stdin_success(runner, tmp_path, mocker):
+    out_file = tmp_path / "from_stdin.docx"
+    mocker.patch("md_to_docx.cli.convert_markdown_to_docx", return_value=out_file)
+    result = runner.invoke(main, ["convert", "-", "-o", str(out_file)], input="# From Stdin\n\nSome text")
+    assert result.exit_code == 0
+    assert "Success" in result.output
+
+
+
 

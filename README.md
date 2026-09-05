@@ -36,6 +36,51 @@ Pandoc’s default DOCX export is LTR and ignores Mermaid. Chinese `--reference-
 
 Also: GFM alerts (`> [!NOTE]`, `> [!WARNING]`), lists, images, links, bold/italic.
 
+## TL;DR — Quick Start (راه‌اندازی و تبدیل سریع)
+
+خلاصهٔ کاربردی جریان تبدیل: **قالب (Template) + فایل یا محتوای متنی (Markdown Content / File) → فایل سند Word (.docx)**
+
+```bash
+# ۱. راه‌اندازی پیش‌نیازها و محیط مجازی (فقط یک‌بار):
+./scripts/bootstrap.sh
+source .venv/bin/activate
+
+# ۲. تبدیل سریع از طریق خط فرمان (CLI):
+# الف) ورودی از فایل Markdown:
+md2docx convert input.md -o output.docx --template purple_book
+
+# ب) ورودی مستقیم از محتوای متنی (Standard Input / Pipe):
+echo "# عنوان سند\n\nمتن نمونه برای تبدیل." | md2docx convert - -o output.docx --template purple_book
+```
+
+استفاده در پایتون (Python API):
+
+```python
+from md_to_docx import convert_markdown_to_docx
+
+# روش اول: ورودی فایل Markdown
+convert_markdown_to_docx(
+    input_path="document.md",
+    output_path="output.docx",
+    template="purple_book",  # یا مسیر پوشه قالب سفارشی: './templates/my_theme'
+    overwrite=True,
+)
+
+# روش دوم: ورودی مستقیم متن رشته‌ای (Markdown Content)
+convert_markdown_to_docx(
+    content="# عنوان سند\n\nتوضیحات، جداول و نمودارهای متنی مارک‌داون...",
+    output_path="output.docx",
+    template="purple_book",
+    overwrite=True,
+)
+```
+
+| مؤلفه | نوع ورودی/خروجی | توضیحات |
+| :--- | :--- | :--- |
+| **ورودی ۱: Template** | نام تم یا مسیر دایرکتوری | تم پیش‌فرض `purple_book` یا هر پوشهٔ حاوی `config.yaml` با رنگ‌ها، ابعاد صفحه، فونت‌ها و استایل‌ها |
+| **ورودی ۲: Markdown** | فایل یا متن رشته‌ای (Content) | فایل `.md` از طریق مسیر (`input_path`) یا متن مستقیم مارک‌داون (`content` در پایتون / stdin `-` در CLI) |
+| **خروجی: Word File** | فایل سند Word | فایل سند با پسوند **`.docx`** (کاملاً راست‌به‌چپ، فونت فارسی Vazirmatn، بج‌های عناوین، جداول و نمودارهای embed شده) |
+
 ## Requirements
 
 - **Python 3.11+**
