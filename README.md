@@ -1,8 +1,12 @@
 # md-to-docx
 
-**Persian / RTL Markdown + Mermaid → Word (.docx)**
+<p align="right">
+  <a href="README_FA.md"><b>نسخه فارسی (Persian)</b></a> | <b>English</b>
+</p>
 
-Turn bilingual technical Markdown into a styled Word document: right-to-left body text, mixed Persian/English runs, numbered heading badges, callout boxes, RTL tables, syntax-highlighted code, and high-resolution Mermaid diagrams.
+**Bilingual Persian / RTL Markdown + Mermaid → Word (.docx)**
+
+Transform bilingual technical Markdown into styled Microsoft Word documents: right-to-left (RTL) body text, mixed Persian/English inline runs, numbered heading badges, styled callout boxes, RTL tables, syntax-highlighted code blocks, and crisp high-resolution Mermaid diagrams.
 
 <p align="center">
   <img src="sample-template/1.jpg" alt="Sample Word output: heading badges, Mermaid diagram, DBA note" width="100%">
@@ -11,147 +15,157 @@ Turn bilingual technical Markdown into a styled Word document: right-to-left bod
   <img src="sample-template/2.jpg" alt="Sample Word output: warning callout, quote, RTL table" width="420">
 </p>
 
-## Why this exists
+---
 
-Pandoc’s default DOCX export is LTR and ignores Mermaid. Chinese `--reference-doc` templates (eastAsia fonts, first-line indent) do not produce correct Persian. This tool uses Pandoc only as a Markdown parser, then writes OOXML with python-docx so:
+## TL;DR — Quick Start
 
-- Document and tables are RTL (`w:bidi`, `w:bidiVisual`)
-- Complex-script fonts and sizes are set (`w:cs`, `w:szCs`, `fa-IR`)
-- Heading numbers such as `۱.۴.۱` stay in the source (never auto-renumbered)
-- `::: note` / `::: warning` become colored callout boxes
-- Fenced `mermaid` blocks are rendered to PNG with [mermaid-cli](https://github.com/mermaid-js/mermaid-cli)
+Conversion pipeline summary: **Template + Markdown (File or Content) → Word Document (.docx)**
 
-## Features
-
-| Input | Output |
-| --- | --- |
-| `# ۱.۵ Title` | Purple number badge on the right + underlined title |
-| Mixed `Clientها` / `SQL Server` | Script-split runs so Latin does not reverse |
-| `::: note نکتهٔ DBA` | Dark purple header with `◆`, light body |
-| `::: warning هشدار` | Cream box, brown title, no emoji |
-| `> quote` | Thick purple **physical-right** bar + `#ECE4F1` fill |
-| GFM table | Header row solid purple / white text, columns visual-RTL |
-| ` ```mermaid ` + `شکل ۲-۱. …` | Centered PNG + caption |
-| ` ```python ` / `sql` / `ts` | Shaded LTR code box with Pygments highlighting |
-
-Also: GFM alerts (`> [!NOTE]`, `> [!WARNING]`), lists, images, links, bold/italic.
-
-## TL;DR — Quick Start (راه‌اندازی و تبدیل سریع)
-
-خلاصهٔ کاربردی جریان تبدیل: **قالب (Template) + فایل یا محتوای متنی (Markdown Content / File) → فایل سند Word (.docx)**
+### 1. One-Step Environment Setup (Once)
 
 ```bash
-# ۱. راه‌اندازی پیش‌نیازها و محیط مجازی (فقط یک‌بار):
 ./scripts/bootstrap.sh
 source .venv/bin/activate
-
-# ۲. تبدیل سریع از طریق خط فرمان (CLI):
-# الف) ورودی از فایل Markdown:
-md2docx convert input.md -o output.docx --template purple_book
-
-# ب) ورودی مستقیم از محتوای متنی (Standard Input / Pipe):
-echo "# عنوان سند\n\nمتن نمونه برای تبدیل." | md2docx convert - -o output.docx --template purple_book
 ```
 
-استفاده در پایتون (Python API):
+### 2. Fast Command-Line (CLI) Conversion
+
+```bash
+# Option A: Convert from a Markdown file
+md2docx convert input.md -o output.docx --template purple_book
+
+# Option B: Convert directly from standard input (pipe)
+echo "# Document Title\n\nSample Markdown text with RTL content." | md2docx convert - -o output.docx --template purple_book
+```
+
+### 3. Python API
 
 ```python
 from md_to_docx import convert_markdown_to_docx
 
-# روش اول: ورودی فایل Markdown
+# Option A: Convert from a Markdown file
 convert_markdown_to_docx(
     input_path="document.md",
     output_path="output.docx",
-    template="purple_book",  # یا مسیر پوشه قالب سفارشی: './templates/my_theme'
+    template="purple_book",  # Or custom template path: './templates/my_theme'
     overwrite=True,
 )
 
-# روش دوم: ورودی مستقیم متن رشته‌ای (Markdown Content)
+# Option B: Convert directly from a Markdown string
 convert_markdown_to_docx(
-    content="# عنوان سند\n\nتوضیحات، جداول و نمودارهای متنی مارک‌داون...",
+    content="# Document Title\n\nTechnical paragraphs, tables, and mermaid diagrams...",
     output_path="output.docx",
     template="purple_book",
     overwrite=True,
 )
 ```
 
-| مؤلفه | نوع ورودی/خروجی | توضیحات |
+| Component | Type | Description |
 | :--- | :--- | :--- |
-| **ورودی ۱: Template** | نام تم یا مسیر دایرکتوری | تم پیش‌فرض `purple_book` یا هر پوشهٔ حاوی `config.yaml` با رنگ‌ها، ابعاد صفحه، فونت‌ها و استایل‌ها |
-| **ورودی ۲: Markdown** | فایل یا متن رشته‌ای (Content) | فایل `.md` از طریق مسیر (`input_path`) یا متن مستقیم مارک‌داون (`content` در پایتون / stdin `-` در CLI) |
-| **خروجی: Word File** | فایل سند Word | فایل سند با پسوند **`.docx`** (کاملاً راست‌به‌چپ، فونت فارسی Vazirmatn، بج‌های عناوین، جداول و نمودارهای embed شده) |
+| **Input 1: Template** | Theme name or folder path | Built-in theme (`purple_book`) or any directory containing `config.yaml` with color palettes, fonts, and geometry |
+| **Input 2: Markdown** | File path or string content | Markdown `.md` file path (`input_path`) or raw Markdown text (`content` in Python / `-` in CLI) |
+| **Output: Word File** | Word Document | Output file with **`.docx`** extension (full RTL layout, Vazirmatn font, heading badges, tables, and embedded diagrams) |
 
-## Requirements
+---
+
+## Why This Exists
+
+Pandoc’s default DOCX writer produces purely LTR layouts and completely ignores Mermaid diagram blocks. Furthermore, Chinese `--reference-doc` templates introduce East Asian fonts and unwanted first-line indentation that break Persian typography. 
+
+**md-to-docx** uses Pandoc strictly as a robust Markdown AST parser, and then builds native OpenXML (OOXML) documents using `python-docx`:
+
+- **Native RTL Document & Tables**: Injects `<w:bidi>` and `<w:bidiVisual>` so text and table columns align properly.
+- **Complex Script Font Mapping**: Explicitly assigns `<w:cs>`, `<w:szCs>`, and `fa-IR` language tags for Persian runs while keeping Latin fonts distinct.
+- **Source Heading Numbering**: Persian/Arabic/Latin numbers (e.g., `۱.۴.۱`) are extracted directly from headings and preserved without Word multilevel auto-renumbering distortion.
+- **Callout Admonitions**: `::: note` and `::: warning` blocks are styled into beautiful container boxes with distinct accents and iconography.
+- **Automated Mermaid Rendering**: Fenced `mermaid` code blocks are compiled via `mermaid-cli` and embedded directly as high-DPI PNGs.
+
+---
+
+## Key Features
+
+| Input | Output |
+| :--- | :--- |
+| `# ۱.۵ Section Title` | Purple number badge on the right + bottom accent line |
+| Mixed `Clientها` / `SQL Server` | Script-segmented runs to ensure Latin words do not flip direction |
+| `::: note DBA Tip` | Dark purple header with `◆` bullet and shaded body |
+| `::: warning Warning` | Warm amber box with clear title styling |
+| `> Blockquote` | Thick purple **physical-right** accent bar with `#ECE4F1` background fill |
+| GFM Table | Purple header row with white text, visual-RTL column alignment |
+| ` ```mermaid ` + `شکل ۲-۱. …` | Centered diagram image with standard figure caption beneath |
+| ` ```python ` / `sql` / `ts` | Monospaced shaded LTR code box with Pygments syntax highlighting |
+
+Also supports modern GitHub alerts (`> [!NOTE]`, `> [!WARNING]`), bullet and numbered lists, local images, internal and external hyperlinks, native Word footnotes, and Office Math equations (`m:oMath`).
+
+---
+
+## System Requirements
 
 - **Python 3.11+**
-- **[Pandoc](https://pandoc.org) 3.x** (parser only; it does not write the DOCX)
-- **Node.js 18+** for Mermaid
-- **Chrome / Chromium** (mermaid-cli / Puppeteer)
+- **[Pandoc](https://pandoc.org) 3.x** (used as AST parser only; it does not write the DOCX)
+- **Node.js 18+** (required for `mermaid-cli`)
+- **Chrome / Chromium** (required for Puppeteer headless rendering)
 
-Install [Vazirmatn](https://github.com/rastikerdar/vazirmatn) on the machine that will *open* the Word file. A copy is vendored for Mermaid rendering; v1 does not embed the font inside the DOCX.
+> [!TIP]
+> For optimal viewing, install the [Vazirmatn](https://github.com/rastikerdar/vazirmatn) font on the client machine that will view the resulting Word file.
 
-## Quick Start & Bootstrap
+---
 
-Run the automated one-step bootstrap script to set up Python virtualenv, Node dependencies, Puppeteer Chromium, and check Pandoc:
+## Quick Start & Setup
+
+Run the automated one-step setup script to configure Python virtual environment, dependencies, Puppeteer Chromium, and verify Pandoc:
 
 ```bash
 ./scripts/bootstrap.sh
 ```
 
-Or manually:
+Or configure manually:
 
 ```bash
-# macOS
+# On macOS:
 brew install pandoc
 
+# Python environment setup
 python3.11 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -c constraints.txt -e ".[dev]"
 npm ci || npm install
 
-# Install Chromium for Puppeteer if needed
+# Install Chromium for Puppeteer
 npx puppeteer browsers install chrome
 ```
 
-`pip install -e .` puts the `md2docx` command on your PATH.
+Installing the package puts the `md2docx` executable directly on your PATH.
 
-## Usage
+---
+
+## CLI Usage
 
 ```bash
 # Basic conversion
-md2docx convert chapter.md -o chapter.docx
+md2docx convert document.md -o document.docx
 
-# Overwrite existing file explicitly
-md2docx convert chapter.md -o chapter.docx --overwrite
+# Overwrite existing output explicitly
+md2docx convert document.md -o document.docx --overwrite
 
-# With custom template
-md2docx convert chapter.md -o chapter.docx --template purple_book
-md2docx convert chapter.md -o chapter.docx --template ./templates/my_theme
+# Use a custom template
+md2docx convert document.md -o document.docx --template purple_book
+md2docx convert document.md -o document.docx --template ./templates/my_theme
 
-# Manage templates
+# Inspect and validate templates
 md2docx templates list
 md2docx templates validate purple_book
 ```
 
-If `-o` is omitted, the output path is the input name with a `.docx` suffix. Output must be **`.docx`** (Word 97-2003 `.doc` is rejected).
-
-Mermaid PNGs are written as `diagram_*.png` into `{output_stem}_media` beside the DOCX (or a dedicated `media_dir` you pass to the Python API). Unrelated files in that folder are never deleted. The DOCX embeds images, so it still opens if the media folder is removed.
-
 ### CLI Exit Codes
 
 - `0`: Successful execution.
-- `1`: Conversion failure, tool execution failure (e.g. mmdc or pandoc), or permission error.
-- `2`: Usage error, missing input file, directory input, output identical to input, or file collision without `--overwrite`.
+- `1`: Operational failure (e.g. conversion error, permission issue).
+- `2`: Usage error, missing input, invalid options, or unconfirmed file collision.
 
-Try the bundled sample:
-
-```bash
-md2docx convert tests/fixtures/sample_input.md -o sample.docx -f
-```
+---
 
 ## Pandoc AST Support Matrix
-
-The adapter supports standard technical Markdown constructs, translating Pandoc AST nodes into high-fidelity OOXML:
 
 | Category | Node Types | Output Behavior |
 | :--- | :--- | :--- |
@@ -160,160 +174,54 @@ The adapter supports standard technical Markdown constructs, translating Pandoc 
 | | `Strikeout` | Strikethrough (`w:strike`) |
 | | `Superscript`, `Subscript` | Vertical alignment (`w:vertAlign`) |
 | | `Underline` | Single underline (`w:u`) |
-| | `SmallCaps` | Small caps (`w:smallCaps`) |
-| | `Code` | Inline monospace code (`Courier New`), LTR run |
-| | `Link`, `Quoted`, `Span` | Real `w:hyperlink` relationships; quote marks preserved; Span children rendered |
-| | `Note` | Word footnotes (`word/footnotes.xml`) |
-| | `Math` | Office Math (`m:oMath`) for common TeX (`\\frac`, `\\sum`, sub/sup) |
+| | `SmallCaps` | Small capitals (`w:smallCaps`) |
+| | `Code` | Inline monospace code (`Courier New`), strictly LTR |
+| | `Link`, `Quoted`, `Span` | True Word hyperlinks (`w:hyperlink`), quotation marks (« »), formatted spans |
+| | `Note` | Real Word footnotes (`word/footnotes.xml`) |
+| | `Math` | Native Office Math (`m:oMath`) for common TeX equations (fractions, sums, powers) |
 | **Blocks** | `Header` (1–6) | Level-specific size, bottom border, or RTL number badge table |
 | | `Para`, `Plain` | Justified RTL/LTR body paragraphs with line spacing |
 | | `BlockQuote` | Shaded box (`#ECE4F1`) with physical right border (`6B2FA0`) |
-| | `Div` (Callouts) | `::: note` / `::: warning` / GFM alerts; **retains rich child formatting** (multi-paragraphs, lists, code blocks, bold/italic) |
-| | `Div` (Mermaid) | Compiled via mermaid-cli to persistent PNG beside output document |
-| | `Table` | Multi-tbody support, header row (`6B2FA0`), `tblGrid` explicit widths, visual-RTL (`w:bidiVisual`), optional table captions |
+| | `Div` (Callouts) | `::: note`, `::: warning`, and GFM alerts preserving rich child formatting |
+| | `Div` (Mermaid) | Compiled via mermaid-cli to high-res PNG and centered |
+| | `Table` | Multi-tbody support, repeating header row (`6B2FA0`), visual-RTL (`w:bidiVisual`) |
 | | `CodeBlock` | LTR shaded container with syntax highlighting token styles |
 | | `BulletList`, `OrderedList`| Indented list items with text markers |
 | | `DefinitionList` | Bolded terms with indented definition descriptions |
 | | `HorizontalRule` | Subtle horizontal dividing rule |
-| | `RawBlock` | Raw text passthrough |
 
-*Note: Unrecognized AST nodes raise an explicit `ConvertError` rather than being silently dropped.*
-
-More fixtures (Persian, English, mixed) live in [`tests/fixtures/`](tests/fixtures/) and [`examples/`](examples/).
-
-## Markdown syntax
-
-Heading numbers are **in the Markdown**, in Persian, Arabic-Indic, or Latin digits. The converter extracts them; Word multilevel lists are not used.
-
-````markdown
-# ۱.۵ پایگاه‌های دادهٔ سیستمی SQL Server
-
-Database Engine هستهٔ اصلی SQL Server است.
-
-::: note نکتهٔ DBA
-SSMS به Instance متصل می‌شود، نه به فایل‌های Database.
-:::
-
-```mermaid
-graph TD
-    Client["Client / SSMS"] --> Engine["Database Engine"]
-```
-شکل ۲-۱. مسیر درخواست
-
-::: warning هشدار
-از System Databaseها غافل نشوید.
-:::
-
-> Login هویت سطح Instance است. User هویت سطح Database است.
-
-| مفهوم | سطح معمول | نمونه |
-| :--- | :--- | :--- |
-| Login | Instance | DOMAIN\Niloofar |
-| User | Database | Niloofar |
-````
-
-Callouts also accept GFM alerts:
-
-```markdown
-> [!NOTE] Replication Lag
-> Read replicas can lag during write spikes.
-
-> [!WARNING]
-> Do not evict persistent tokens.
-```
-
-A caption is the paragraph immediately after a Mermaid fence (or image) that starts with `شکل`, `Figure`, or `Fig.`.
+---
 
 ## Templates
 
-Each folder under `templates/` is a theme. `purple_book` is the default and matches the screenshots above.
+The default `purple_book` theme is located under `templates/purple_book/`:
 
 ```
 templates/purple_book/
 ├── config.yaml                 # schema_version: 1, colors, fonts, callouts
-├── mermaid.json                # mermaid-cli theme (no flowchart RTL)
-├── mermaid.css
-├── puppeteer.json
-├── fonts/Vazirmatn-Regular.ttf # SIL OFL, used when rendering diagrams
-└── shell.docx                  # optional Word shell (headers / footers)
+├── mermaid.json                # mermaid-cli theme configuration
+├── mermaid.css                 # Custom font and CSS injection for Mermaid
+├── puppeteer.json              # Headless browser runtime settings
+├── fonts/Vazirmatn-Regular.ttf # SIL OFL font used during diagram rendering
+└── shell.docx                  # Optional base Word document (headers and footers)
 ```
 
-Create a new theme:
+### Creating a Custom Theme
 
 ```bash
 cp -R templates/purple_book templates/my_theme
-# edit templates/my_theme/config.yaml
+# Edit templates/my_theme/config.yaml
 md2docx templates validate my_theme
 md2docx convert input.md --template my_theme -o out.docx
 ```
 
-`--template` can be a name (`purple_book`) or a path to a directory that contains `config.yaml`. Paths in the YAML (Mermaid theme, CSS, fonts) are resolved relative to that directory, not the current working directory.
+---
 
-## How it works
+## Operational Specifications & Limits (v1)
 
-```
-Markdown
-  → admonition preprocess (::: note Title → Pandoc fenced div)
-  → mermaid-cli PNG (fail loud; never leave a raw fence)
-  → pandoc -t json
-  → python-docx renderer (RTL oxml, heading tables, callouts)
-  → .docx
-```
-
-Pandoc is **not** used as the DOCX writer. A Chinese reference `.docx` will not give you Persian RTL.
-
-## Development & Testing
-
-> [!NOTE]
-> System `pytest` on PATH may reference an incompatible Python interpreter. Always execute tests through the virtual environment's interpreter using `python -m pytest`:
-
-```bash
-# Setup environment & dependencies
-./scripts/bootstrap.sh
-
-# Run unit tests
-source .venv/bin/activate
-python -m pytest tests -q -m "not (mermaid or integration)"
-
-# Run full test suite with skip details visible
-python -m pytest tests -v -rs
-```
-
-Unit tests isolate components using mocks. Integration tests automatically probe for `pandoc` and `mmdc` (plus headless Chromium) and will run or skip based on environment availability.
-
-```
-src/md_to_docx/     CLI, pipeline, renderer, oxml helpers, bidi
-templates/          visual themes (purple_book, fonts, CSS)
-tests/              pytest test suite + golden Markdown fixtures
-tests/fixtures/     Persian, English, and comprehensive Markdown fixtures
-```
-
-## Operational Limits & Specifications
-
-- **Pandoc AST API Version Lock**: Explicitly locked to Pandoc API versions 1.22.x through 1.23.x (Pandoc 2.11 through 3.x). Mismatched AST versions raise an explicit `ConvertError`.
-- **Raw HTML & Comments Policy**: HTML comments (`<!-- ... -->`) are suppressed from the rendered document unless they specify page breaks (`<!-- pagebreak -->`). Line breaks (`<br/>`) emit Word line breaks. Unrecognized dangerous HTML blocks (`<script>`, `<iframe>`) are rejected with `ConvertError`.
-- **Image Alt Text vs. Captions**: Alt text in `![Alt text](image.png)` is embedded as accessibility metadata (`wp:docPr` `descr`), preventing accidental duplicate visible captions. Visible captions are rendered beneath figures only when an explicit title attribute (`"Title"`) or `Figure` caption block is provided.
-- **Code Highlighting & Unknown Language Fallback**: Pygments styles code blocks with distinct token colors for Python, SQL, TypeScript, JSON, etc. Unknown language tags deterministically fall back to `TextLexer` using the configured monospace font and neutral color without guessing.
-- **Dialect**: Pandoc Markdown with `fenced_divs`, `pipe_tables`, `backtick_code_blocks`, `raw_html`, and `lists_without_preceding_blankline`. This is not GitHub-only GFM and not a full HTML importer. Remote `http(s)`/`data:` images are rejected. Table rowspan/colspan is rejected.
-- **Media ownership**: Only `diagram_*.png` files written by this conversion are replaced. Custom `media_dir` must be a dedicated folder (not the Markdown directory, project root, cwd, or output parent).
-- **Publish locking**: An inter-process flock on `{stem}.publish.lock` serializes writers. The lock file is not deleted. Crash recovery restores the previous DOCX when a backup was taken; it is not a two-inode atomic rename of DOCX+media together.
-- **Transactional Staging**: Conversion work happens in a staging directory that is always deleted. DOCX publish uses `os.replace`. Diagram files are copied individually.
-- **Maximum Input File Size**: 20 MB (`MAX_INPUT_SIZE_BYTES = 20 * 1024 * 1024`). Files exceeding this limit fail immediately with `ConvertError` to prevent memory exhaustion.
-- **Mermaid Compilation Timeout**: 60.0 seconds per diagram (`MERMAID_TIMEOUT_SECONDS = 60.0`).
-- **Mermaid Browser Renderer**: Prefers Puppeteer-managed Chrome for Testing over system Chrome.app, passing explicit `executablePath`, `--no-sandbox`, and a matching `headless` mode (`true` for full Chrome, `shell` for chrome-headless-shell). Launch failures retry the next discovered browser. Integration tests skip unless a live mmdc probe succeeds.
-- **Table Cell Spanning**: Multi-row (`rowspan > 1`) and multi-column (`colspan > 1`) cells are explicitly rejected with descriptive `ConvertError` indicating table row/column coordinates to prevent silent truncation.
-
-## Limitations (v1)
-
-- Heading badges and callouts are square (Word tables cannot match rounded screenshot chrome).
-- Fonts are named in the document, not embedded. Recipients without Vazirmatn will see a substitute.
-- Mermaid is PNG only (Word SVG support is unreliable).
-- Native Word numbering definitions are not used; list markers are text (`-`, `1.`).
-- `shell.docx` is single-section only (document-wide header/footer). Multi-section shells are rejected.
-- Remote images and Word 97 `.doc` output are not supported.
-
-## Fonts
-
-[Vazirmatn](https://github.com/rastikerdar/vazirmatn) is included under the [SIL Open Font License](templates/purple_book/fonts/OFL.txt) and is used for Persian / complex-script runs (`w:cs`). Latin runs use `fonts.latin` from the theme (default **Segoe UI**). Fonts are named in the DOCX, not embedded; machines without those families will substitute.
-
-The `purple_book` theme lives in [`templates/purple_book/`](templates/purple_book/) in this repo and is also shipped inside the Python package (`md_to_docx/templates/purple_book`) so `md2docx` works after `pip install` without a checkout.
+- **File Formats**: Official output is `.docx`. Legacy binary Word 97-2003 `.doc` is rejected with exit code 2.
+- **Input Size Cap**: Maximum supported input size is 20 MB (`MAX_INPUT_SIZE_BYTES = 20 * 1024 * 1024`).
+- **Concurrent Publishing**: File write locks are serialized with stable POSIX `fcntl.flock` (`.{stem}.publish.lock`).
+- **Remote Images**: Remote `http://`, `https://`, and `data:` URIs are rejected in v1; reference local images relative to your Markdown file.
+- **Word Shell Contract**: A custom `shell.docx` must contain exactly one section.
+- **Font Fallback**: Recipient systems without Vazirmatn will automatically fall back to their system default Arabic/Persian font.
