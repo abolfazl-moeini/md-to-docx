@@ -1,0 +1,278 @@
+{
+  "pandoc-api-version": [1, 23, 1],
+  "meta": {},
+  "blocks": [
+    {
+      "t": "Header",
+      "c": [
+        1,
+        ["header-1", [], []],
+        [
+          {"t": "Str", "c": "۱.۵"},
+          {"t": "Space"},
+          {"t": "Str", "c": "پایگاه‌های"},
+          {"t": "Space"},
+          {"t": "Str", "c": "دادهٔ"},
+          {"t": "Space"},
+          {"t": "Str", "c": "سیستمی"},
+          {"t": "Space"},
+          {"t": "Str", "c": "SQL"},
+          {"t": "Space"},
+          {"t": "Str", "c": "Server"}
+        ]
+      ]
+    },
+    {
+      "t": "Para",
+      "c": [
+        {"t": "Str", "c": "در"},
+        {"t": "Space"},
+        {"t": "Str", "c": "یک"},
+        {"t": "Space"},
+        {"t": "Str", "c": "نصب"},
+        {"t": "Space"},
+        {"t": "Str", "c": "معمولی"},
+        {"t": "Space"},
+        {"t": "Str", "c": "SQL"},
+        {"t": "Space"},
+        {"t": "Str", "c": "Server"}
+      ]
+    },
+    {
+      "t": "Header",
+      "c": [
+        2,
+        ["header-2", [], []],
+        [
+          {"t": "Str", "c": "۱.۴.۱"},
+          {"t": "Space"},
+          {"t": "Str", "c": "نقش"},
+          {"t": "Space"},
+          {"t": "Str", "c": "Database"},
+          {"t": "Space"},
+          {"t": "Str", "c": "Engine"}
+        ]
+      ]
+    },
+    {
+      "t": "Para",
+      "c": [
+        {"t": "Str", "c": "Database"},
+        {"t": "Space"},
+        {"t": "Str", "c": "Engine"},
+        {"t": "Space"},
+        {"t": "Str", "c": "هستهٔ"},
+        {"t": "Space"},
+        {"t": "Str", "c": "اصلی"},
+        {"t": "Space"},
+        {"t": "Str", "c": "است."}
+      ]
+    },
+    {
+      "t": "Div",
+      "c": [
+        ["", ["note"], [["title", "نکتهٔ DBA"]]],
+        [
+          {
+            "t": "Para",
+            "c": [
+              {"t": "Str", "c": "در"},
+              {"t": "Space"},
+              {"t": "Str", "c": "شکل،"},
+              {"t": "Space"},
+              {"t": "Str", "c": "SSMS"},
+              {"t": "Space"},
+              {"t": "Str", "c": "متصل"},
+              {"t": "Space"},
+              {"t": "Str", "c": "می‌شوند."}
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "t": "Div",
+      "c": [
+        ["", ["mermaid-figure"], [["caption", "شکل ۲-۱. معماری داخلی SQL Server Database Engine و مسیر ساده‌شدهٔ پردازش درخواست‌ها"]]],
+        [
+          {
+            "t": "Para",
+            "c": [
+              {
+                "t": "Image",
+                "c": [
+                  ["", [], []],
+                  [],
+                  ["tests/fixtures/diagram-stub.png", ""]
+                ]
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "t": "Div",
+      "c": [
+        ["", ["warning"], [["title", "هشدار"]]],
+        [
+          {
+            "t": "Para",
+            "c": [
+              {"t": "Str", "c": "System"},
+              {"t": "Space"},
+              {"t": "Str", "c": "Databaseها"},
+              {"t": "Space"},
+              {"t": "Str", "c": "را"},
+              {"t": "Space"},
+              {"t": "Str", "c": "کم‌اهمیت"},
+              {"t": "Space"},
+              {"t": "Str", "c": "ندانید."}
+            ]
+          }
+        ]
+      ]
+    },
+    {
+      "t": "Header",
+      "c": [
+        2,
+        ["header-3", [], []],
+        [
+          {"t": "Str", "c": "۱.۶"},
+          {"t": "Space"},
+          {"t": "Str", "c": "مدل"},
+          {"t": "Space"},
+          {"t": "Str", "c": "ذهنی"}
+        ]
+      ]
+    },
+    {
+      "t": "BlockQuote",
+      "c": [
+        {
+          "t": "Para",
+          "c": [
+            {"t": "Str", "c": "Login"},
+            {"t": "Space"},
+            {"t": "Str", "c": "معمولاً"},
+            {"t": "Space"},
+            {"t": "Str", "c": "هویت"},
+            {"t": "Space"},
+            {"t": "Str", "c": "ورود"},
+            {"t": "Space"},
+            {"t": "Str", "c": "است."}
+          ]
+        }
+      ]
+    },
+    {
+      "t": "Table",
+      "c": [
+        ["", [], []],
+        [null, []],
+        [
+          [{"t": "AlignDefault"}, {"t": "ColWidthDefault"}],
+          [{"t": "AlignDefault"}, {"t": "ColWidthDefault"}],
+          [{"t": "AlignDefault"}, {"t": "ColWidthDefault"}]
+        ],
+        [
+          ["", [], []],
+          [
+            [
+              ["", [], []],
+              [
+                [
+                  ["", [], []],
+                  {"t": "AlignDefault"},
+                  1,
+                  1,
+                  [{"t": "Plain", "c": [{"t": "Str", "c": "مفهوم"}]}]
+                ],
+                [
+                  ["", [], []],
+                  {"t": "AlignDefault"},
+                  1,
+                  1,
+                  [{"t": "Plain", "c": [{"t": "Str", "c": "سطح"}, {"t": "Space"}, {"t": "Str", "c": "معمول"}]}]
+                ],
+                [
+                  ["", [], []],
+                  {"t": "AlignDefault"},
+                  1,
+                  1,
+                  [{"t": "Plain", "c": [{"t": "Str", "c": "نمونه"}]}]
+                ]
+              ]
+            ]
+          ]
+        ],
+        [
+          [
+            ["", [], []],
+            0,
+            [],
+            [
+              [
+                ["", [], []],
+                [
+                  [
+                    ["", [], []],
+                    {"t": "AlignDefault"},
+                    1,
+                    1,
+                    [{"t": "Plain", "c": [{"t": "Str", "c": "Login"}]}]
+                  ],
+                  [
+                    ["", [], []],
+                    {"t": "AlignDefault"},
+                    1,
+                    1,
+                    [{"t": "Plain", "c": [{"t": "Str", "c": "Instance"}]}]
+                  ],
+                  [
+                    ["", [], []],
+                    {"t": "AlignDefault"},
+                    1,
+                    1,
+                    [{"t": "Plain", "c": [{"t": "Str", "c": "DOMAIN\\Niloofar"}]}]
+                  ]
+                ]
+              ],
+              [
+                ["", [], []],
+                [
+                  [
+                    ["", [], []],
+                    {"t": "AlignDefault"},
+                    1,
+                    1,
+                    [{"t": "Plain", "c": [{"t": "Str", "c": "User"}]}]
+                  ],
+                  [
+                    ["", [], []],
+                    {"t": "AlignDefault"},
+                    1,
+                    1,
+                    [{"t": "Plain", "c": [{"t": "Str", "c": "Database"}]}]
+                  ],
+                  [
+                    ["", [], []],
+                    {"t": "AlignDefault"},
+                    1,
+                    1,
+                    [{"t": "Plain", "c": [{"t": "Str", "c": "Niloofar"}]}]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ],
+        [
+          ["", [], []],
+          []
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "md-to-docx"
+version = "0.1.0"
+description = "Persian / RTL Markdown + Mermaid to DOCX converter with custom templates"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "python-docx>=1.1.2",
+    "lxml>=5.2.0",
+    "pyyaml>=6.0.1",
+    "click>=8.1.7",
+    "pillow>=10.3.0",
+    "pygments>=2.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-mock>=3.14.0",
+]
+
+[project.scripts]
+md2docx = "md_to_docx.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+    "mermaid: tests that run actual mmdc / mermaid-cli",
+    "pandoc: tests that run actual pandoc binary",
+]

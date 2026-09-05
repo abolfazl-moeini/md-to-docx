@@ -1,0 +1,65 @@
+schema_version: 1
+name: purple_book
+direction: rtl
+language_bidi: fa-IR
+language_latin: en-US
+fonts:
+  body: Vazirmatn
+  heading: Vazirmatn
+  code: Courier New
+page:
+  size: A4
+  margin_cm: { top: 2.0, bottom: 2.0, left: 2.0, right: 2.0 }
+colors:
+  primary: "6B2FA0"
+  primary_dark: "4A156D"
+  on_primary: "FFFFFF"
+  quote_bg: "ECE4F1"
+  warning_bg: "FBF7F4"
+  warning_title: "8B6914"
+  body: "2D2D2D"
+  caption: "5A5A5A"
+headings:
+  extract_number: true
+  badge: true
+  h1: { size_pt: 16, badge_bg: primary, badge_fg: on_primary }
+  h2: { size_pt: 14, badge_bg: primary, badge_fg: on_primary }
+  h3: { size_pt: 13, badge_bg: primary, badge_fg: on_primary }
+callouts:
+  note:
+    classes: [note]
+    default_title: نکته
+    icon: "◆"
+    header_bg: primary_dark
+    header_fg: on_primary
+    body_bg: "F7F3FB"
+  warning:
+    classes: [warning]
+    default_title: هشدار
+    icon: ""
+    header_bg: warning_bg
+    header_fg: warning_title
+    body_bg: warning_bg
+quotes:
+  border_side: physical_right
+  border_pt: 12
+  border_color: primary
+  bg: quote_bg
+tables:
+  header_bg: primary
+  header_fg: on_primary
+  bidi_visual: true
+code_block:
+  theme: friendly
+  bg: "F6F8FA"
+  border_color: "D0D7DE"
+  border_sz: 4
+  font_size_pt: 9.5
+  line_spacing: 1.15
+mermaid:
+  format: png
+  scale: 3
+  max_width_in: 6.3
+  theme_file: mermaid.json
+  css_file: mermaid.css
+  puppeteer_config: puppeteer.json

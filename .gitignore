@@ -1,0 +1,26 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+node_modules/
+npm-debug.log*
+
+.DS_Store
+*.log
+.idea/
+.vscode/
+*.swp
+
+# Local conversion output (keep fixtures and examples)
+/out.docx
+/*.docx

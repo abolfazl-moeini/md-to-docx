@@ -1,0 +1,11 @@
+{
+  "name": "md-to-docx",
+  "version": "0.1.0",
+  "description": "Persian / RTL Markdown + Mermaid to DOCX converter",
+  "scripts": {
+    "mmdc": "mmdc"
+  },
+  "dependencies": {
+    "@mermaid-js/mermaid-cli": "^11.4.2"
+  }
+}
