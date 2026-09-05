@@ -277,3 +277,47 @@ def test_fin14_cli_rejects_doc_extension(tmp_path):
     result = runner.invoke(main, ["convert", str(in_file), "-o", str(tmp_path / "out.doc")])
     assert result.exit_code == 2
     assert ".doc" in result.output.lower()
+
+
+def _mp_worker(in_file_str: str, out_file_str: str, overwrite: bool, q) -> None:
+    try:
+        from md_to_docx.pipeline import convert_markdown_to_docx
+        res = convert_markdown_to_docx(Path(in_file_str), Path(out_file_str), overwrite=overwrite)
+        q.put(("OK", str(res)))
+    except Exception as e:
+        q.put(("ERR", type(e).__name__, str(e)))
+
+
+def test_fin13_multiprocess_concurrency(tmp_path):
+    import multiprocessing
+    in_file = tmp_path / "mp_in.md"
+    in_file.write_text("# Multi-Process Test\n\nSome paragraph text.\n", encoding="utf-8")
+    out_file = tmp_path / "mp_out.docx"
+
+    ctx = multiprocessing.get_context("spawn")
+    q = ctx.Queue()
+
+    p1 = ctx.Process(target=_mp_worker, args=(str(in_file), str(out_file), True, q))
+    p2 = ctx.Process(target=_mp_worker, args=(str(in_file), str(out_file), True, q))
+
+    p1.start()
+    p2.start()
+    p1.join(timeout=10)
+    p2.join(timeout=10)
+
+    results = []
+    while not q.empty():
+        results.append(q.get_nowait())
+
+    assert len(results) == 2
+    assert all(r[0] == "OK" for r in results)
+    assert out_file.exists()
+
+    # Now verify overwrite=False fails safely in a separate process
+    p3 = ctx.Process(target=_mp_worker, args=(str(in_file), str(out_file), False, q))
+    p3.start()
+    p3.join(timeout=10)
+    err_res = q.get_nowait()
+    assert err_res[0] == "ERR"
+    assert "ConvertError" in err_res[1]
+    assert "already exists" in err_res[2]
