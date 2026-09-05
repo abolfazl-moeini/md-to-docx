@@ -45,12 +45,17 @@ Also: GFM alerts (`> [!NOTE]`, `> [!WARNING]`), lists, images, links, bold/itali
 
 Install [Vazirmatn](https://github.com/rastikerdar/vazirmatn) on the machine that will *open* the Word file. A copy is vendored for Mermaid rendering; v1 does not embed the font inside the DOCX.
 
-## Install
+## Quick Start & Bootstrap
+
+Run the automated one-step bootstrap script to set up Python virtualenv, Node dependencies, Puppeteer Chromium, and check Pandoc:
 
 ```bash
-git clone https://github.com/<you>/md-to-docx.git
-cd md-to-docx
+./scripts/bootstrap.sh
+```
 
+Or manually:
+
+```bash
 # macOS
 brew install pandoc
 
@@ -59,7 +64,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 npm install
 
-# if mmdc cannot find a browser
+# Install Chromium for Puppeteer if needed
 npx puppeteer browsers install chrome
 ```
 
@@ -68,21 +73,63 @@ npx puppeteer browsers install chrome
 ## Usage
 
 ```bash
+# Basic conversion
 md2docx convert chapter.md -o chapter.docx
+
+# Overwrite existing file explicitly
+md2docx convert chapter.md -o chapter.docx --overwrite
+
+# With custom template
 md2docx convert chapter.md -o chapter.docx --template purple_book
 md2docx convert chapter.md -o chapter.docx --template ./templates/my_theme
 
+# Manage templates
 md2docx templates list
 md2docx templates validate purple_book
 ```
 
 If `-o` is omitted, the output path is the input name with a `.docx` suffix.
 
+### CLI Exit Codes
+
+- `0`: Successful execution.
+- `1`: Conversion failure, tool execution failure (e.g. mmdc or pandoc), or permission error.
+- `2`: Usage error, missing input file, directory input, output identical to input, or file collision without `--overwrite`.
+
 Try the bundled sample:
 
 ```bash
-md2docx convert tests/fixtures/sample_input.md -o sample.docx
+md2docx convert tests/fixtures/sample_input.md -o sample.docx -f
 ```
+
+## Pandoc AST Support Matrix
+
+The adapter supports standard technical Markdown constructs, translating Pandoc AST nodes into high-fidelity OOXML:
+
+| Category | Node Types | Output Behavior |
+| :--- | :--- | :--- |
+| **Inlines** | `Str`, `Space`, `SoftBreak`, `LineBreak` | Bidi-segmented runs, Complex Script (Vazirmatn) & Latin font matching |
+| | `Strong`, `Emph` | Bold (`w:b`, `w:bCs`), Italic (`w:i`, `w:iCs`) |
+| | `Strikeout` | Strikethrough (`w:strike`) |
+| | `Superscript`, `Subscript` | Vertical alignment (`w:vertAlign`) |
+| | `Underline` | Single underline (`w:u`) |
+| | `SmallCaps` | Small caps (`w:smallCaps`) |
+| | `Code` | Inline monospace code (`Courier New`), LTR run |
+| | `Link`, `Quoted`, `Span` | Formatted inner inlines preserved |
+| | `RawInline`, `Note`, `Math` | Preserved and rendered in-place |
+| **Blocks** | `Header` (1–6) | Level-specific size, bottom border, or RTL number badge table |
+| | `Para`, `Plain` | Justified RTL/LTR body paragraphs with line spacing |
+| | `BlockQuote` | Shaded box (`#ECE4F1`) with physical right border (`6B2FA0`) |
+| | `Div` (Callouts) | `::: note` / `::: warning` / GFM alerts; **retains rich child formatting** (multi-paragraphs, lists, code blocks, bold/italic) |
+| | `Div` (Mermaid) | Compiled via mermaid-cli to persistent PNG beside output document |
+| | `Table` | Multi-tbody support, header row (`6B2FA0`), `tblGrid` explicit widths, visual-RTL (`w:bidiVisual`), optional table captions |
+| | `CodeBlock` | LTR shaded container with syntax highlighting token styles |
+| | `BulletList`, `OrderedList`| Indented list items with text markers |
+| | `DefinitionList` | Bolded terms with indented definition descriptions |
+| | `HorizontalRule` | Subtle horizontal dividing rule |
+| | `RawBlock` | Raw text passthrough |
+
+*Note: Unrecognized AST nodes raise an explicit `ConvertError` rather than being silently dropped.*
 
 More fixtures (Persian, English, mixed) live in [`tests/fixtures/`](tests/fixtures/) and [`examples/`](examples/).
 

@@ -232,3 +232,152 @@ def test_render_code_block_edge_cases(renderer):
     assert 'w:cs="Vazirmatn"' in tbl_persian._tbl.xml
 
 
+def test_shell_docx_cleaning_preserves_sectpr_header_footer_and_removes_placeholders(tmp_path):
+    # 1. Create a mock shell.docx with headers, footers, and dummy placeholder paragraphs
+    shell_doc = Document()
+    section = shell_doc.sections[0]
+    header = section.header
+    header.paragraphs[0].text = "Header from shell"
+    footer = section.footer
+    footer.paragraphs[0].text = "Footer from shell"
+    shell_doc.add_paragraph("PLACEHOLDER BODY TEXT THAT MUST BE REMOVED")
+    shell_doc.add_paragraph("ANOTHER PLACEHOLDER LINE")
+
+    shell_path = tmp_path / "shell.docx"
+    shell_doc.save(str(shell_path))
+
+    # 2. Create a template pointing to this shell.docx
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "schema_version: 1\nname: shell_tmpl\ndirection: rtl\n"
+        "fonts: {body: Vazirmatn, heading: Vazirmatn, code: Courier New}\n"
+        "colors: {primary: '6B2FA0', primary_dark: '4A156D', on_primary: 'FFF', quote_bg: 'EEE', warning_bg: 'FFF', warning_title: '888', body: '222', caption: '555'}\n"
+        "headings: {}\ncallouts: {}\nquotes: {}\ntables: {}\n",
+        encoding="utf-8",
+    )
+    tmpl = Template.load(tmp_path)
+    assert tmpl.shell_docx_path == shell_path
+
+    # 3. Instantiate DocxRenderer with this template
+    renderer_with_shell = DocxRenderer(template=tmpl)
+    renderer_with_shell.render_paragraph("New document content.")
+
+    out_file = tmp_path / "rendered_from_shell.docx"
+    renderer_with_shell.doc.save(str(out_file))
+
+    # 4. Verify that the output has no placeholder text, but preserves header/footer
+    reopened = Document(str(out_file))
+    body_text = " ".join(p.text for p in reopened.paragraphs)
+    assert "PLACEHOLDER BODY TEXT THAT MUST BE REMOVED" not in body_text
+    assert "ANOTHER PLACEHOLDER LINE" not in body_text
+    assert "New document content." in body_text
+
+    reopened_section = reopened.sections[0]
+    assert "Header from shell" in reopened_section.header.paragraphs[0].text
+    assert "Footer from shell" in reopened_section.footer.paragraphs[0].text
+
+
+def test_table_rtl_bidi_visual_and_tblgrid(renderer):
+    from docx.oxml.ns import qn
+    headers = ["مفهوم", "سطح معمول", "نمونه"]
+    rows = [["Login", "Instance", "DOMAIN\\User"]]
+    tbl = renderer.render_table(headers, rows)
+    xml = tbl._tbl.xml
+
+    # Must contain bidiVisual
+    assert "<w:bidiVisual" in xml
+
+    # Must contain tblGrid with 3 columns
+    grid = None
+    for child in tbl._tbl:
+        if child.tag == qn("w:tblGrid"):
+            grid = child
+            break
+    assert grid is not None
+    assert len(grid) == 3
+
+    # Cell 0 contains first logical column "مفهوم" (displayed on right in RTL)
+    assert "مفهوم" in tbl.cell(0, 0).text
+    assert "نمونه" in tbl.cell(0, 2).text
+
+
+def test_table_ltr_no_bidi_visual_and_tblgrid(renderer):
+    from docx.oxml.ns import qn
+    headers = ["Concept", "Level", "Example"]
+    rows = [["Login", "Instance", "DOMAIN\\User"]]
+    tbl = renderer.render_table(headers, rows)
+    xml = tbl._tbl.xml
+
+    # LTR table must NOT contain bidiVisual
+    assert "<w:bidiVisual" not in xml
+
+    # Must contain tblGrid with 3 columns
+    grid = None
+    for child in tbl._tbl:
+        if child.tag == qn("w:tblGrid"):
+            grid = child
+            break
+    assert grid is not None
+    assert len(grid) == 3
+    assert "Concept" in tbl.cell(0, 0).text
+
+
+def test_render_definition_list(renderer):
+    items = [
+        ("Term A", ["Definition for term A"]),
+        ("واژه ب", ["توضیح واژه ب به فارسی"]),
+    ]
+    renderer.render_definition_list(items)
+    all_text = " ".join(p.text for p in renderer.doc.paragraphs)
+    assert "Term A" in all_text
+    assert "Definition for term A" in all_text
+    assert "واژه ب" in all_text
+    assert "توضیح واژه ب" in all_text
+
+
+def test_render_horizontal_rule(renderer):
+    p = renderer.render_horizontal_rule()
+    xml = p._p.xml
+    assert "<w:pBdr" in xml
+    assert "<w:bottom" in xml
+
+
+def test_table_without_headers_preserves_all_data(renderer):
+    """Verifies that tables with empty headers retain all rows and columns."""
+    rows = [
+        ["مقدار ۱", "مقدار ۲"],
+        ["مقدار ۳", "مقدار ۴"],
+    ]
+    tbl = renderer.render_table(headers=[], rows=rows)
+    assert len(tbl.rows) == 2
+    assert len(tbl.columns) == 2
+    assert "مقدار ۱" in tbl.cell(0, 0).text
+    assert "مقدار ۲" in tbl.cell(0, 1).text
+    assert "مقدار ۳" in tbl.cell(1, 0).text
+    assert "مقدار ۴" in tbl.cell(1, 1).text
+
+
+def test_table_repeating_header_and_cant_split(renderer):
+    """F-12: Verifies that tables have repeating headers (<w:tblHeader>) and cantSplit rows."""
+    from docx.oxml.ns import qn
+    headers = ["ستون ۱", "ستون ۲"]
+    rows = [["داده ۱", "داده ۲"]]
+    tbl = renderer.render_table(headers=headers, rows=rows)
+
+    # Header row has tblHeader in trPr
+    assert "<w:tblHeader" in tbl.rows[0]._tr.xml
+
+    # All rows have cantSplit in trPr
+    for row in tbl.rows:
+        assert "<w:cantSplit" in row._tr.xml
+
+
+def test_render_page_break(renderer):
+    """F-12: Verifies that explicit page breaks generate <w:br w:type='page'/>."""
+    renderer.render_page_break()
+    last_p = renderer.doc.paragraphs[-1]
+    xml = last_p._p.xml
+    assert 'w:type="page"' in xml
+
+
+

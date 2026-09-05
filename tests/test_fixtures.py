@@ -47,13 +47,26 @@ def test_diverse_fixtures_exist():
 
 
 @pytest.mark.pandoc
-def test_convert_all_fixtures_and_retain_on_disk():
-    """Converts all diverse fixtures to DOCX using default template and ensures they remain on disk."""
+@pytest.mark.mermaid
+def test_convert_all_fixtures_and_retain_on_disk(tmp_path):
+    """Converts all diverse fixtures to DOCX using default template in tmp_path to avoid modifying tracked files."""
     import shutil
+    from md_to_docx.mermaid import _find_browser_executable
     if not shutil.which("pandoc"):
         pytest.skip("pandoc is not installed")
+    if not _find_browser_executable() and not shutil.which("mmdc"):
+        pytest.skip("Chromium/Chrome and mmdc are not available in this environment")
+
+    # Copy shared image assets
+    for img in ["1.jpg", "2.jpg", "diagram-stub.png"]:
+        src_img = FIXTURES_DIR / img
+        if src_img.exists():
+            (tmp_path / img).write_bytes(src_img.read_bytes())
+
     for name in REQUIRED_FIXTURES:
-        md_file = FIXTURES_DIR / name
+        src_md = FIXTURES_DIR / name
+        md_file = tmp_path / name
+        md_file.write_text(src_md.read_text(encoding="utf-8"), encoding="utf-8")
         docx_file = md_file.with_suffix(".docx")
 
         # Convert using default purple_book template

@@ -55,13 +55,15 @@ def convert_markdown_to_docx(
     output_path: str | Path,
     template: str | Path | Template = "purple_book",
     render_mermaid_fn: Optional[Callable] = None,
+    media_dir: Optional[str | Path] = None,
 ) -> Path:
     """
     Executes the full conversion pipeline from Markdown to styled DOCX.
+    Diagram images are persisted to media_dir (defaults to {output_stem}_media beside docx).
     """
     in_file = Path(input_path).resolve()
     if not in_file.exists() or not in_file.is_file():
-        raise FileNotFoundError(f"Input file '{input_path}' does not exist.")
+        raise FileNotFoundError(f"Input file '{input_path}' does not exist or is not a regular file.")
 
     out_file = Path(output_path).resolve()
     out_file.parent.mkdir(parents=True, exist_ok=True)
@@ -81,28 +83,27 @@ def convert_markdown_to_docx(
     }
     admon_processed = preprocess_admonitions(raw_text, default_titles=default_titles)
 
-    # 3. Preprocess Mermaid diagrams
-    with tempfile.TemporaryDirectory(prefix="md2docx_") as tmp_dir:
-        media_dir = Path(tmp_dir) / "media"
-        mermaid_processed = process_mermaid_blocks(
-            admon_processed,
-            output_dir=media_dir,
-            template=tmpl,
-            render_fn=render_mermaid_fn,
-        )
+    # 3. Preprocess Mermaid diagrams into persistent media directory
+    effective_media_dir = Path(media_dir).resolve() if media_dir else out_file.parent / f"{out_file.stem}_media"
+    mermaid_processed = process_mermaid_blocks(
+        admon_processed,
+        output_dir=effective_media_dir,
+        template=tmpl,
+        render_fn=render_mermaid_fn,
+    )
 
-        # 4. Parse to Pandoc JSON AST
-        ast_data = run_pandoc_ast(mermaid_processed)
+    # 4. Parse to Pandoc JSON AST
+    ast_data = run_pandoc_ast(mermaid_processed)
 
-        # 5. Initialize Renderer
-        renderer = DocxRenderer(template=tmpl, base_dir=in_file.parent)
+    # 5. Initialize Renderer
+    renderer = DocxRenderer(template=tmpl, base_dir=in_file.parent)
 
-        # Normal style CS/bidi is applied in DocxRenderer._setup_normal_style.
+    # Normal style CS/bidi is applied in DocxRenderer._setup_normal_style.
 
-        # 6. Translate AST to DOCX
-        ast_to_docx(ast_data, renderer)
+    # 6. Translate AST to DOCX
+    ast_to_docx(ast_data, renderer)
 
-        # 7. Save output
-        renderer.doc.save(str(out_file))
+    # 7. Save output
+    renderer.doc.save(str(out_file))
 
     return out_file

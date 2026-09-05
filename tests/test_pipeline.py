@@ -91,3 +91,72 @@ def test_pipeline_golden_xpaths(tmp_path, mocker):
         # 9. Numbered headings in w:tbl with badge, not raw pandoc heading
         badge_tables = doc_tree.xpath("//w:tbl[.//w:tcPr/w:shd[@w:fill='6B2FA0'] and .//w:t[contains(text(), '۱.۴.۱')]]", namespaces=NS)
         assert len(badge_tables) >= 1
+
+
+def test_pipeline_special_characters_and_quotes(tmp_path, mocker):
+    """F-14: Verifies titles with double quotes, special characters, and XML markup are rendered safely."""
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Header",
+                "c": [1, ["", [], []], [{"t": "Str", "c": 'عنوان با "کوتیشن" و <تگ>'}]],
+            },
+            {
+                "t": "Para",
+                "c": [{"t": "Str", "c": 'متن با کاراکترهای & و < و > و "کوتیشن"'}],
+            },
+        ],
+    }
+    mocker.patch("md_to_docx.pipeline.run_pandoc_ast", return_value=ast_dict)
+
+    in_file = tmp_path / "special.md"
+    in_file.write_text('# عنوان با "کوتیشن" و <تگ>\n\nمتن\n', encoding="utf-8")
+    out_docx = tmp_path / "special.docx"
+
+    convert_markdown_to_docx(in_file, out_docx)
+    assert out_docx.exists()
+
+    with zipfile.ZipFile(out_docx, "r") as z:
+        doc_xml = z.read("word/document.xml")
+        tree = etree.fromstring(doc_xml)
+        doc_text = "".join(tree.xpath("//w:t/text()", namespaces=NS))
+        assert "کوتیشن" in doc_text
+        assert "<تگ>" in doc_text
+
+
+def test_pipeline_unicode_paths_and_spaces(tmp_path, mocker):
+    """F-14: Verifies pipeline handles directory paths with Persian Unicode characters and spaces."""
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {"t": "Para", "c": [{"t": "Str", "c": "تست مسیر یونیکد"}]}
+        ],
+    }
+    mocker.patch("md_to_docx.pipeline.run_pandoc_ast", return_value=ast_dict)
+
+    unicode_dir = tmp_path / "پوشه آزمایشی با فاصله"
+    unicode_dir.mkdir(parents=True)
+    in_file = unicode_dir / "سند ورودی.md"
+    in_file.write_text("# سلام", encoding="utf-8")
+    out_docx = unicode_dir / "سند خروجی.docx"
+
+    saved = convert_markdown_to_docx(in_file, out_docx)
+    assert saved.exists()
+    assert saved == out_docx.resolve()
+
+
+def test_pipeline_missing_mermaid_cli_raises_informative_error(tmp_path, mocker):
+    """F-01: Verifies that missing Mermaid CLI provides informative troubleshooting message."""
+    from md_to_docx.mermaid import render_mermaid_to_png
+    mocker.patch("md_to_docx.mermaid._find_mmdc_cmd", return_value=["non_existent_mmdc_executable_xyz"])
+    tmpl = Template.load("purple_book")
+
+    out_png = tmp_path / "diag.png"
+    with pytest.raises(ConvertError) as exc_info:
+        render_mermaid_to_png("graph TD\nA-->B", out_png, tmpl)
+    err_str = str(exc_info.value)
+    assert "executable not found" in err_str or "Mermaid CLI" in err_str
+    assert "npm install" in err_str or "bootstrap" in err_str

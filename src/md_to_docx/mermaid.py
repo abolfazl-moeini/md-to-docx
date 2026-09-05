@@ -1,5 +1,4 @@
-"""Mermaid diagram block extraction, rendering via mermaid-cli, and caption binding."""
-
+import json
 import os
 import re
 import shutil
@@ -14,6 +13,14 @@ from md_to_docx.template import Template, PROJECT_ROOT
 class ConvertError(Exception):
     """Raised when diagram or document conversion fails."""
     pass
+
+
+class MermaidSyntaxError(ConvertError):
+    """Raised when Mermaid syntax in Markdown is malformed (e.g. unclosed fence)."""
+
+    def __init__(self, message: str, line_number: Optional[int] = None):
+        super().__init__(message)
+        self.line_number = line_number
 
 
 CAPTION_RE = re.compile(r"^(?:شکل|Figure|Fig\.)\s+.*", re.IGNORECASE)
@@ -34,6 +41,7 @@ class MermaidBlock:
 def extract_mermaid_blocks(markdown_text: str) -> List[MermaidBlock]:
     """
     Extracts all mermaid code blocks and any immediately following caption line.
+    Raises MermaidSyntaxError with 1-based line number for unclosed or nested fences.
     """
     lines = markdown_text.splitlines()
     blocks: List[MermaidBlock] = []
@@ -48,8 +56,20 @@ def extract_mermaid_blocks(markdown_text: str) -> List[MermaidBlock]:
             code_lines = []
             i += 1
             while i < num_lines and not FENCE_END.match(lines[i]):
+                if MERMAID_FENCE_START.match(lines[i]):
+                    raise MermaidSyntaxError(
+                        f"Nested mermaid fence found at line {i + 1} before block at line {start_line + 1} was closed.",
+                        line_number=i + 1,
+                    )
                 code_lines.append(lines[i])
                 i += 1
+
+            if i >= num_lines:
+                raise MermaidSyntaxError(
+                    f"Unclosed mermaid code block starting at line {start_line + 1}.",
+                    line_number=start_line + 1,
+                )
+
             end_line = i  # Closing fence line
 
             # Check immediately following lines for caption (skipping at most empty lines)
@@ -81,24 +101,98 @@ def extract_mermaid_blocks(markdown_text: str) -> List[MermaidBlock]:
     return blocks
 
 
-def _find_mmdc_binary() -> str:
-    """Finds the mmdc executable in local node_modules or system PATH."""
+def _find_browser_executable() -> Optional[str]:
+    """Finds a viable Chromium / Chrome / Edge browser executable for Puppeteer."""
+    env_path = os.environ.get("PUPPETEER_EXECUTABLE_PATH")
+    if env_path and Path(env_path).is_file():
+        return env_path
+
+    # Check system PATH
+    for bin_name in [
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "chrome",
+        "brave-browser",
+        "microsoft-edge",
+        "msedge",
+    ]:
+        found = shutil.which(bin_name)
+        if found and Path(found).is_file():
+            return found
+
+    # macOS app paths
+    macos_candidates = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        str(Path.home() / "Applications/Chromium.app/Contents/MacOS/Chromium"),
+    ]
+    for p in macos_candidates:
+        if Path(p).is_file():
+            return p
+
+    # Linux paths
+    linux_candidates = [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/snap/bin/chromium",
+    ]
+    for p in linux_candidates:
+        if Path(p).is_file():
+            return p
+
+    # Puppeteer cache
+    cache_dirs = [
+        Path.home() / ".cache" / "puppeteer",
+        Path.home() / "Library" / "Caches" / "puppeteer",
+    ]
+    for cdir in cache_dirs:
+        if cdir.is_dir():
+            for chrome_bin in cdir.glob("**/chrome"):
+                if chrome_bin.is_file() and os.access(chrome_bin, os.X_OK):
+                    return str(chrome_bin.resolve())
+
+    return None
+
+
+def _find_mmdc_cmd() -> List[str]:
+    """Finds the mmdc executable command as a structured argv list."""
     candidates = [
         PROJECT_ROOT / "node_modules" / ".bin" / "mmdc",
         Path.cwd() / "node_modules" / ".bin" / "mmdc",
     ]
     for local_mmdc in candidates:
-        if local_mmdc.exists():
-            return str(local_mmdc.resolve())
+        if local_mmdc.is_file() and os.access(local_mmdc, os.X_OK):
+            return [str(local_mmdc.resolve())]
 
     system_mmdc = shutil.which("mmdc")
     if system_mmdc:
-        return system_mmdc
+        return [system_mmdc]
 
     if shutil.which("npx"):
-        return "npx -y @mermaid-js/mermaid-cli"
+        return ["npx", "-y", "@mermaid-js/mermaid-cli"]
 
-    return "mmdc"
+    return ["mmdc"]
+
+
+def _get_puppeteer_config_path(template: Template, work_dir: Path) -> Path:
+    """Returns path to puppeteer config, ensuring --no-sandbox flags are set."""
+    if template.mermaid_puppeteer_path and template.mermaid_puppeteer_path.exists():
+        return template.mermaid_puppeteer_path
+
+    default_cfg = work_dir / "puppeteer-default.json"
+    if not default_cfg.exists():
+        default_cfg.write_text(
+            json.dumps({"args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]}),
+            encoding="utf-8",
+        )
+    return default_cfg
 
 
 def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]:
@@ -148,9 +242,9 @@ def render_mermaid_to_png(mmd_code: str, output_path: Path, template: Template) 
     temp_mmd = output_path.with_suffix(".mmd")
     temp_mmd.write_text(mmd_code, encoding="utf-8")
 
-    mmdc_cmd = _find_mmdc_binary()
+    mmdc_cmd = _find_mmdc_cmd()
     cmd = (
-        mmdc_cmd.split()
+        list(mmdc_cmd)
         + [
             "-i", str(temp_mmd),
             "-o", str(output_path),
@@ -165,24 +259,14 @@ def render_mermaid_to_png(mmd_code: str, output_path: Path, template: Template) 
     css_path = _effective_mermaid_css(template, output_path.parent)
     if css_path:
         cmd.extend(["-C", str(css_path)])
-    if template.mermaid_puppeteer_path and template.mermaid_puppeteer_path.exists():
-        cmd.extend(["-p", str(template.mermaid_puppeteer_path)])
 
+    puppeteer_cfg = _get_puppeteer_config_path(template, output_path.parent)
+    cmd.extend(["-p", str(puppeteer_cfg)])
+
+    browser_bin = _find_browser_executable()
     env = dict(os.environ)
-    if "PUPPETEER_EXECUTABLE_PATH" not in env:
-        candidate_browsers = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-            "/usr/bin/google-chrome",
-            "/usr/bin/chromium",
-            "/usr/bin/chromium-browser",
-        ]
-        for b in candidate_browsers:
-            if Path(b).exists():
-                env["PUPPETEER_EXECUTABLE_PATH"] = b
-                break
+    if browser_bin:
+        env["PUPPETEER_EXECUTABLE_PATH"] = browser_bin
 
     try:
         proc = subprocess.run(
@@ -195,12 +279,29 @@ def render_mermaid_to_png(mmd_code: str, output_path: Path, template: Template) 
         )
     except FileNotFoundError as e:
         raise ConvertError(
-            f"Mermaid CLI (mmdc) not found: {e}. Run 'npm install' to install @mermaid-js/mermaid-cli."
+            f"Mermaid CLI executable not found: {e}. Run 'npm install' or 'scripts/bootstrap.sh' to install dependencies."
         ) from e
+    finally:
+        # Resource cleanup (F-14)
+        if temp_mmd.exists():
+            try:
+                temp_mmd.unlink()
+            except OSError:
+                pass
 
     if proc.returncode != 0:
         err_msg = proc.stderr.strip() or proc.stdout.strip()
-        raise ConvertError(f"Mermaid compilation failed with exit code {proc.returncode}:\n{err_msg}")
+        browser_info = browser_bin if browser_bin else "None found"
+        raise ConvertError(
+            f"Mermaid compilation failed with exit code {proc.returncode}:\n"
+            f"{err_msg}\n"
+            f"Detected browser executable: {browser_info}\n"
+            "Troubleshooting:\n"
+            "  1. Ensure Google Chrome or Chromium is installed.\n"
+            "  2. Or set PUPPETEER_EXECUTABLE_PATH to your browser binary.\n"
+            "  3. Or install Chromium via: npx puppeteer browsers install chrome\n"
+            "  4. Run 'npm install' or 'scripts/bootstrap.sh' to set up all dependencies."
+        )
 
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise ConvertError("Mermaid compilation produced empty or missing image file.")

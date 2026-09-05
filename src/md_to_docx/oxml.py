@@ -46,8 +46,13 @@ def set_run_cs_font(
     bidi_lang: str = "fa-IR",
     latin_lang: str = "en-US",
     cs_font_name: str | None = None,
+    strike: bool = False,
+    superscript: bool = False,
+    subscript: bool = False,
+    underline: bool = False,
+    small_caps: bool = False,
 ) -> None:
-    """Sets Complex Script and Latin font families, half-point sizes, and bidi language."""
+    """Sets Complex Script and Latin font families, sizes, formatting, and bidi language."""
     rPr = run._r.get_or_add_rPr()
 
     # Font names
@@ -79,6 +84,38 @@ def set_run_cs_font(
         for tag in ("w:i", "w:iCs"):
             if rPr.find(qn(tag)) is None:
                 rPr.append(OxmlElement(tag))
+
+    # Strikeout
+    if strike:
+        if rPr.find(qn("w:strike")) is None:
+            rPr.append(OxmlElement("w:strike"))
+
+    # Superscript / Subscript
+    if superscript:
+        vert = rPr.find(qn("w:vertAlign"))
+        if vert is None:
+            vert = OxmlElement("w:vertAlign")
+            rPr.append(vert)
+        vert.set(qn("w:val"), "superscript")
+    elif subscript:
+        vert = rPr.find(qn("w:vertAlign"))
+        if vert is None:
+            vert = OxmlElement("w:vertAlign")
+            rPr.append(vert)
+        vert.set(qn("w:val"), "subscript")
+
+    # Underline
+    if underline:
+        u = rPr.find(qn("w:u"))
+        if u is None:
+            u = OxmlElement("w:u")
+            rPr.append(u)
+        u.set(qn("w:val"), "single")
+
+    # Small Caps
+    if small_caps:
+        if rPr.find(qn("w:smallCaps")) is None:
+            rPr.append(OxmlElement("w:smallCaps"))
 
     # Color
     if color_hex:

@@ -85,3 +85,71 @@ def test_render_mermaid_empty_output_raises_converterror(mocker, tmp_path):
     with pytest.raises(ConvertError) as exc_info:
         render_mermaid_to_png("graph TD\n A --> B", out_file, tmpl)
     assert "empty or missing" in str(exc_info.value)
+
+
+def test_extract_unclosed_mermaid_fence_raises_syntax_error():
+    from md_to_docx.mermaid import MermaidSyntaxError
+    md_text = "# عنوان\n\n```mermaid\ngraph TD\n    A --> B\n"
+    with pytest.raises(MermaidSyntaxError) as exc_info:
+        extract_mermaid_blocks(md_text)
+    assert "Unclosed mermaid code block" in str(exc_info.value)
+    assert exc_info.value.line_number == 3
+
+
+def test_extract_nested_mermaid_fence_raises_syntax_error():
+    from md_to_docx.mermaid import MermaidSyntaxError
+    md_text = "```mermaid\ngraph TD\n```mermaid\n    A --> B\n```\n"
+    with pytest.raises(MermaidSyntaxError) as exc_info:
+        extract_mermaid_blocks(md_text)
+    assert "Nested mermaid fence" in str(exc_info.value)
+    assert exc_info.value.line_number == 3
+
+
+def test_extract_multiple_consecutive_mermaid_blocks():
+    md_text = """```mermaid
+graph TD
+    A --> B
+```
+شکل ۱. اول
+
+```mermaid
+graph LR
+    C --> D
+```
+شکل ۲. دوم
+"""
+    blocks = extract_mermaid_blocks(md_text)
+    assert len(blocks) == 2
+    assert blocks[0].caption == "شکل ۱. اول"
+    assert blocks[1].caption == "شکل ۲. دوم"
+
+
+def test_mermaid_artifact_persistence_after_context_exit(tmp_path):
+    """Verifies that generated diagram images remain accessible on disk after processing."""
+    from md_to_docx.pipeline import convert_markdown_to_docx
+    tmpl = Template.load("purple_book")
+    stub_png = Path(__file__).parent / "fixtures" / "diagram-stub.png"
+
+    def mock_render(code, out_path, template):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(stub_png.read_bytes())
+        return out_path
+
+    md_file = tmp_path / "doc.md"
+    md_file.write_text(
+        "# تست دیاگرام\n\n```mermaid\ngraph TD\n    A --> B\n```\nشکل ۱. نمونه\n",
+        encoding="utf-8",
+    )
+    docx_file = tmp_path / "doc.docx"
+
+    convert_markdown_to_docx(md_file, docx_file, template=tmpl, render_mermaid_fn=mock_render)
+
+    # DOCX exists
+    assert docx_file.exists()
+
+    # Stable media dir exists and contains diagram
+    media_dir = tmp_path / "doc_media"
+    assert media_dir.exists(), "Persistent media_dir must exist beside output docx"
+    diagrams = list(media_dir.glob("*.png"))
+    assert len(diagrams) >= 1, "Diagram PNG must persist on disk"
+    assert diagrams[0].stat().st_size > 0, "Persisted diagram must not be empty"

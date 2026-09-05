@@ -24,3 +24,4 @@ npm-debug.log*
 # Local conversion output (keep fixtures and examples)
 /out.docx
 /*.docx
+*_media/
