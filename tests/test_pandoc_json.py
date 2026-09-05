@@ -84,6 +84,38 @@ def test_ast_to_docx_preserves_inline_formatting():
     assert "<w:i" in xml
 
 
+def test_ast_to_docx_blockquote_preserves_inline_formatting():
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "BlockQuote",
+                "c": [
+                    {
+                        "t": "Para",
+                        "c": [
+                            {"t": "Str", "c": "Login "},
+                            {"t": "Strong", "c": [{"t": "Str", "c": "معمولاً"}]},
+                            {"t": "Str", "c": " هویت Instance است."},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl)
+    ast_to_docx(ast_dict, renderer)
+    quotes = [p for p in doc.paragraphs if p.text.strip()]
+    assert quotes
+    xml = quotes[0]._p.xml
+    assert "معمولاً" in xml
+    assert "<w:b" in xml
+    assert 'w:fill="ECE4F1"' in xml
+
+
 def test_ast_to_docx_ordered_and_bullet_lists():
     ast_dict = {
         "pandoc-api-version": [1, 23, 1],

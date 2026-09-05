@@ -124,6 +124,16 @@ graph LR
     assert blocks[1].caption == "شکل ۲. دوم"
 
 
+def test_puppeteer_runtime_config_always_includes_no_sandbox(tmp_path):
+    from md_to_docx.mermaid import _get_puppeteer_config_path
+    import json
+    tmpl = Template.load("purple_book")
+    cfg_path = _get_puppeteer_config_path(tmpl, tmp_path)
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert "--no-sandbox" in data.get("args", [])
+    assert "--disable-setuid-sandbox" in data.get("args", [])
+
+
 def test_mermaid_artifact_persistence_after_context_exit(tmp_path):
     """Verifies that generated diagram images remain accessible on disk after processing."""
     from md_to_docx.pipeline import convert_markdown_to_docx

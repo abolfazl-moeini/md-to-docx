@@ -54,8 +54,8 @@ def test_convert_all_fixtures_and_retain_on_disk(tmp_path):
     from md_to_docx.mermaid import _find_browser_executable
     if not shutil.which("pandoc"):
         pytest.skip("pandoc is not installed")
-    if not _find_browser_executable() and not shutil.which("mmdc"):
-        pytest.skip("Chromium/Chrome and mmdc are not available in this environment")
+    if not _find_browser_executable():
+        pytest.skip("Chromium/Chrome is not available in this environment")
 
     # Copy shared image assets
     for img in ["1.jpg", "2.jpg", "diagram-stub.png"]:

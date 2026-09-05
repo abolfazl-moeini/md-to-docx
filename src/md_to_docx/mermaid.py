@@ -182,17 +182,27 @@ def _find_mmdc_cmd() -> List[str]:
 
 
 def _get_puppeteer_config_path(template: Template, work_dir: Path) -> Path:
-    """Returns path to puppeteer config, ensuring --no-sandbox flags are set."""
+    """Writes a runtime puppeteer config that always includes --no-sandbox flags."""
+    cfg: dict = {
+        "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    }
     if template.mermaid_puppeteer_path and template.mermaid_puppeteer_path.exists():
-        return template.mermaid_puppeteer_path
+        try:
+            existing = json.loads(template.mermaid_puppeteer_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = {}
+        if isinstance(existing, dict):
+            user_args = list(existing.get("args") or [])
+            merged = dict(existing)
+            for flag in ("--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"):
+                if flag not in user_args:
+                    user_args.append(flag)
+            merged["args"] = user_args
+            cfg = merged
 
-    default_cfg = work_dir / "puppeteer-default.json"
-    if not default_cfg.exists():
-        default_cfg.write_text(
-            json.dumps({"args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]}),
-            encoding="utf-8",
-        )
-    return default_cfg
+    runtime_cfg = work_dir / "puppeteer-runtime.json"
+    runtime_cfg.write_text(json.dumps(cfg), encoding="utf-8")
+    return runtime_cfg
 
 
 def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]:

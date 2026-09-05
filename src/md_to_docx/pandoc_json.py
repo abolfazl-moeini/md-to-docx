@@ -485,8 +485,13 @@ def render_single_block(block: Dict[str, Any], renderer: DocxRenderer) -> None:
             emit_paragraph_inlines(c, renderer)
 
     elif t == "BlockQuote":
-        quote_texts = [blocks_to_text([b]) for b in c]
-        renderer.render_quote(quote_texts)
+        for b in c:
+            if b.get("t") in ("Para", "Plain"):
+                inlines = b.get("c") or []
+                p = renderer.begin_quote_paragraph(inlines_to_text(inlines))
+                emit_inlines(inlines, renderer, p, font_size_pt=10.5)
+            else:
+                renderer.render_quote([blocks_to_text([b])])
 
     elif t == "Div":
         attr, child_blocks = c

@@ -275,6 +275,8 @@ def test_shell_docx_cleaning_preserves_sectpr_header_footer_and_removes_placehol
     reopened_section = reopened.sections[0]
     assert "Header from shell" in reopened_section.header.paragraphs[0].text
     assert "Footer from shell" in reopened_section.footer.paragraphs[0].text
+    # F-04: shell page size/margins must not be overwritten by template defaults
+    assert abs(int(reopened_section.page_width) - int(shell_doc.sections[0].page_width)) < 200
 
 
 def test_table_rtl_bidi_visual_and_tblgrid(renderer):

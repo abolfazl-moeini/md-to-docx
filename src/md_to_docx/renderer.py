@@ -44,6 +44,7 @@ class DocxRenderer:
     ):
         self.template = template or Template.load("purple_book")
         self.base_dir = Path(base_dir).resolve() if base_dir else None
+        self._using_shell = False
         self.doc = doc if doc is not None else self._init_document()
         self._setup_page()
 
@@ -51,6 +52,7 @@ class DocxRenderer:
         if self.template.shell_docx_path and self.template.shell_docx_path.exists():
             doc = Document(str(self.template.shell_docx_path))
             self._clear_body_preserve_sectpr(doc)
+            self._using_shell = True
             return doc
         return Document()
 
@@ -64,6 +66,10 @@ class DocxRenderer:
     def _setup_page(self) -> None:
         set_doc_bidi(self.doc)
         self._setup_normal_style()
+
+        # F-04: keep page size/margins from shell.docx sectPr
+        if self._using_shell:
+            return
 
         # Page setup
         for section in self.doc.sections:
@@ -201,6 +207,16 @@ class DocxRenderer:
         set_paragraph_align(p, align)
         p.paragraph_format.line_spacing = self._line_spacing()
         p.paragraph_format.space_after = Pt(6)
+        return p
+
+    def begin_quote_paragraph(self, sample_text: str = "") -> Paragraph:
+        quote_cfg = self.template.quotes or {}
+        border_color = self._resolve_color(quote_cfg.get("border_color", "primary"))
+        quote_bg = self._resolve_color(quote_cfg.get("bg", "quote_bg"))
+        border_sz = int(quote_cfg.get("border_sz", 24))
+        p = self.begin_paragraph(sample_text, align="both")
+        set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15)
+        set_paragraph_shading(p, quote_bg)
         return p
 
     def render_paragraph(
