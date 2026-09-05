@@ -31,7 +31,9 @@ from md_to_docx.oxml import (
     set_paragraph_bottom_border,
     set_table_column_widths,
     set_doc_bidi,
+    set_paragraph_keep,
 )
+from md_to_docx.paths import resolve_image_source
 
 
 class DocxRenderer:
@@ -46,47 +48,62 @@ class DocxRenderer:
         self.template = template or Template.load("purple_book")
         self.base_dir = Path(base_dir).resolve() if base_dir else None
         self._using_shell = False
+        self._width_stack: List[float] = []
+        self._footnote_seq = 0
         self.doc = doc if doc is not None else self._init_document()
         self._setup_page()
 
     def _init_document(self) -> Document:
         if self.template.shell_docx_path and self.template.shell_docx_path.exists():
             doc = Document(str(self.template.shell_docx_path))
+            n_sect = len(doc.sections)
+            if n_sect != 1:
+                raise ConvertError(
+                    f"v1 supports a single-section shell.docx only (found {n_sect} sections). "
+                    "Use a one-section shell with document-wide header/footer, or omit shell."
+                )
             self._clear_body_preserve_sectpr(doc)
             self._using_shell = True
             return doc
         return Document()
 
     def _clear_body_preserve_sectpr(self, doc: Document) -> None:
-        """Clears all placeholder body elements from shell.docx while preserving sectPr (headers/footers/margins)."""
+        """Clears placeholder body elements from a single-section shell, keeping the final sectPr."""
         body = doc._body._element
         for child in list(body):
             if child.tag != qn("w:sectPr"):
                 body.remove(child)
 
-    def _setup_page(self) -> None:
-        set_doc_bidi(self.doc)
-        self._setup_normal_style()
-
-        # F-04: keep page size/margins from shell.docx sectPr
-        if self._using_shell:
-            return
-
-        # Page setup
+    def _apply_page_geometry(self) -> None:
+        size_name = str(self.template.page.get("size", "A4")).strip()
+        sizes = {
+            "A4": (Cm(21.0), Cm(29.7)),
+            "Letter": (Inches(8.5), Inches(11.0)),
+            "Legal": (Inches(8.5), Inches(14.0)),
+            "A5": (Cm(14.8), Cm(21.0)),
+        }
+        if size_name not in sizes:
+            raise ConvertError(f"Unsupported page.size '{size_name}'. Use A4, Letter, Legal, or A5.")
+        width, height = sizes[size_name]
+        margins = self.template.page.get("margin_cm", {}) or {}
+        top = float(margins.get("top", 2.0))
+        bottom = float(margins.get("bottom", 2.0))
+        left = float(margins.get("left", 2.0))
+        right = float(margins.get("right", 2.0))
         for section in self.doc.sections:
-            # Set A4 size
-            section.page_width = Cm(21.0)
-            section.page_height = Cm(29.7)
-
-            margins = self.template.page.get("margin_cm", {})
-            top = margins.get("top", 2.0)
-            bottom = margins.get("bottom", 2.0)
-            left = margins.get("left", 2.0)
-            right = margins.get("right", 2.0)
+            section.page_width = width
+            section.page_height = height
             section.top_margin = Cm(top)
             section.bottom_margin = Cm(bottom)
             section.left_margin = Cm(left)
             section.right_margin = Cm(right)
+
+    def _setup_page(self) -> None:
+        is_rtl = self.template.direction != "ltr"
+        set_doc_bidi(self.doc, bidi=is_rtl)
+        self._setup_normal_style()
+        # YAML page size/margins win over shell geometry (FIN-10 / FIN-02)
+        self._apply_page_geometry()
 
     def _setup_normal_style(self) -> None:
         body_font = self.template.fonts.get("body", "Vazirmatn")
@@ -102,7 +119,7 @@ class DocxRenderer:
             if el is None:
                 el = OxmlElement(tag)
                 rPr.append(el)
-            el.set(qn("w:val"), "22")  # 11pt
+            el.set(qn("w:val"), str(int(round(self.body_font_size_pt * 2))))
         lang = rPr.find(qn("w:lang"))
         if lang is None:
             lang = OxmlElement("w:lang")
@@ -111,16 +128,49 @@ class DocxRenderer:
         lang.set(qn("w:bidi"), self.template.language_bidi)
 
         pPr = style.element.get_or_add_pPr()
-        if pPr.find(qn("w:bidi")) is None:
-            pPr.append(OxmlElement("w:bidi"))
+        bidi_el = pPr.find(qn("w:bidi"))
+        if bidi_el is None:
+            bidi_el = OxmlElement("w:bidi")
+            pPr.append(bidi_el)
+        bidi_el.set(qn("w:val"), "1" if self.template.direction != "ltr" else "0")
         jc = pPr.find(qn("w:jc"))
         if jc is None:
             jc = OxmlElement("w:jc")
             pPr.append(jc)
-        jc.set(qn("w:val"), "both")
+        jc.set(qn("w:val"), "both" if self.template.direction != "ltr" else "left")
+
+    @property
+    def body_font_size_pt(self) -> float:
+        return float(self.template.page.get("font_size_pt", 11.0))
 
     def _line_spacing(self) -> float:
         return float(self.template.page.get("line_spacing", 1.4))
+
+    @property
+    def available_width_in(self) -> float:
+        if self._width_stack:
+            return self._width_stack[-1]
+        return self.content_width_in
+
+    @property
+    def content_height_in(self) -> float:
+        section = self.doc.sections[0]
+        height_emu = int(section.page_height) - int(section.top_margin) - int(section.bottom_margin)
+        return max(1.0, height_emu / 914400.0)
+
+    def quote_border_side(self) -> str:
+        quote_cfg = self.template.quotes or {}
+        requested = str(quote_cfg.get("border_side", "physical_right"))
+        direction = self.template.direction
+        mapping = {
+            "physical_right": "right",
+            "physical_left": "left",
+            "right": "right",
+            "left": "left",
+            "start": "right" if direction == "rtl" else "left",
+            "end": "left" if direction == "rtl" else "right",
+        }
+        return mapping.get(requested, "right" if direction == "rtl" else "left")
 
     def quote_border_sz(self) -> int:
         """OOXML border sz is eighths of a point. Prefer explicit border_sz, else border_pt."""
@@ -235,7 +285,7 @@ class DocxRenderer:
         quote_bg = self._resolve_color(quote_cfg.get("bg", "quote_bg"))
         border_sz = self.quote_border_sz()
         p = self.begin_paragraph(sample_text, align="both")
-        border_side = "right" if self.template.direction == "rtl" else "left"
+        border_side = self.quote_border_side()
         set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15, side=border_side)
         set_paragraph_shading(p, quote_bg)
         return p
@@ -244,7 +294,7 @@ class DocxRenderer:
         self,
         text: str,
         align: str = "both",
-        font_size_pt: float = 11.0,
+        font_size_pt: Optional[float] = None,
         bold: bool = False,
         italic: bool = False,
         color_hex: Optional[str] = None,
@@ -252,6 +302,7 @@ class DocxRenderer:
         bidi: Optional[bool] = None,
     ) -> Paragraph:
         p = target_p if target_p is not None else self.doc.add_paragraph()
+        size = self.body_font_size_pt if font_size_pt is None else font_size_pt
         if bidi is not None:
             set_paragraph_bidi(p, bidi=bidi)
         elif self.template.direction == "ltr":
@@ -267,7 +318,7 @@ class DocxRenderer:
         self.append_text(
             p,
             text,
-            font_size_pt=font_size_pt,
+            font_size_pt=size,
             bold=bold,
             italic=italic,
             color_hex=color_hex or self.template.colors.get("body", "2D2D2D"),
@@ -295,8 +346,10 @@ class DocxRenderer:
             if is_rtl_heading:
                 set_table_bidi_visual(tbl)
 
-            badge_dxa = 936  # 0.65 inch
-            total_dxa = int(round(self.content_width_in * 1440))
+            nchars = max(len(info.number), 1)
+            badge_dxa = int(font_size * 20 * 0.72 * nchars) + 280
+            badge_dxa = max(1200, min(badge_dxa, 3200))
+            total_dxa = int(round(self.available_width_in * 1440))
             title_dxa = max(720, total_dxa - badge_dxa)
             set_table_column_widths(tbl, [badge_dxa, title_dxa])
 
@@ -308,6 +361,7 @@ class DocxRenderer:
             p0 = cell0.paragraphs[0]
             self._clear_paragraph(p0)
             set_paragraph_align(p0, "center")
+            set_paragraph_keep(p0, keep_next=True, keep_lines=True)
             r0 = p0.add_run(info.number)
             set_run_cs_font(
                 r0,
@@ -331,6 +385,7 @@ class DocxRenderer:
             self._clear_paragraph(p1)
             set_paragraph_bidi(p1, bidi=is_rtl_heading)
             set_paragraph_align(p1, "start")
+            set_paragraph_keep(p1, keep_next=True, keep_lines=True)
 
             title_color = self._resolve_color(self.template.colors.get("body", "2D2D2D"))
             self.append_text(
@@ -347,6 +402,7 @@ class DocxRenderer:
             after_p.paragraph_format.space_before = Pt(0)
             after_p.paragraph_format.space_after = Pt(6)
             after_p.text = ""
+            set_paragraph_keep(after_p, keep_next=True)
             return tbl
 
         # Heading without number
@@ -366,6 +422,7 @@ class DocxRenderer:
         )
         p.paragraph_format.space_before = Pt(12)
         p.paragraph_format.space_after = Pt(6)
+        set_paragraph_keep(p, keep_next=True, keep_lines=True)
         return p
 
     def render_callout(
@@ -463,7 +520,7 @@ class DocxRenderer:
         border_sz = self.quote_border_sz()
         rendered = []
         target = container if container is not None else self.doc
-        border_side = "right" if self.template.direction == "rtl" else "left"
+        border_side = self.quote_border_side()
 
         for text in paragraphs:
             p = target.add_paragraph()
@@ -529,6 +586,44 @@ class DocxRenderer:
         """Renders an explicit page break (F-12)."""
         self.doc.add_page_break()
 
+    def add_bookmark(self, name: str) -> None:
+        safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in name)[:40]
+        mark_id = str(abs(hash(safe)) % 100000)
+        start = OxmlElement("w:bookmarkStart")
+        start.set(qn("w:id"), mark_id)
+        start.set(qn("w:name"), safe)
+        end = OxmlElement("w:bookmarkEnd")
+        end.set(qn("w:id"), mark_id)
+        body = self.doc._body._element
+        # Attach to the last block
+        last = list(body)[-1] if list(body) else None
+        if last is not None and last.tag != qn("w:sectPr"):
+            last.append(start)
+            last.append(end)
+        else:
+            body.append(start)
+            body.append(end)
+
+    def add_omml(self, paragraph: Paragraph, tex: str, display: bool = False) -> None:
+        from lxml import etree
+        from md_to_docx.omml import tex_to_omml_xml
+        xml = tex_to_omml_xml(tex, display=display)
+        el = etree.fromstring(xml.encode("utf-8"))
+        paragraph._p.append(el)
+
+    def add_footnote(self, paragraph: Paragraph, note_blocks: List[Any]) -> None:
+        from md_to_docx.footnotes import add_footnote_body, add_footnote_reference, _ensure_footnotes_part, next_footnote_id
+        from md_to_docx.pandoc_json import blocks_to_text
+
+        part = _ensure_footnotes_part(self.doc)
+        fid = next_footnote_id(part)
+        add_footnote_reference(paragraph, fid)
+        fn_p, root, part = add_footnote_body(self.doc, fid)
+        text = blocks_to_text(note_blocks) if note_blocks else ""
+        self.append_text(fn_p, " " + text, font_size_pt=9.5)
+        from md_to_docx.footnotes import ET_to_bytes
+        part._blob = ET_to_bytes(root)
+
     def render_table(
         self,
         headers: List[str],
@@ -561,8 +656,9 @@ class DocxRenderer:
         if is_rtl_table and self.template.tables.get("bidi_visual", True):
             set_table_bidi_visual(tbl)
 
-        primary_color = self._resolve_color("primary")
-        on_primary = self._resolve_color("on_primary")
+        tbl_cfg = self.template.tables or {}
+        primary_color = self._resolve_color(tbl_cfg.get("header_bg", "primary"))
+        on_primary = self._resolve_color(tbl_cfg.get("header_fg", "on_primary"))
 
         # Explicit tblGrid and tblW setup (F-07)
         total_dxa = int(round(self.content_width_in * 1440))
@@ -624,9 +720,9 @@ class DocxRenderer:
                     font_name=self.template.fonts.get("body", "Vazirmatn"),
                 )
 
-        # Prevent rows from splitting across page breaks (F-12)
-        for row in tbl.rows:
-            r_trPr = row._tr.get_or_add_trPr()
+        # Keep header row together; body rows may split across pages (FIN-11)
+        if has_header:
+            r_trPr = tbl.rows[0]._tr.get_or_add_trPr()
             if r_trPr.find(qn("w:cantSplit")) is None:
                 r_trPr.append(OxmlElement("w:cantSplit"))
 
@@ -654,25 +750,48 @@ class DocxRenderer:
             spacer.paragraph_format.space_after = Pt(6)
         return tbl
 
+    def _fit_image_size(
+        self,
+        px_w: int,
+        px_h: int,
+        width_in: Optional[float] = None,
+        height_in: Optional[float] = None,
+        is_mermaid: bool = False,
+    ) -> Tuple[float, float]:
+        aspect = px_h / max(1, px_w)
+        max_w = self.available_width_in
+        max_h = self.content_height_in
+        if is_mermaid:
+            max_w = min(max_w, float(self.template.mermaid.get("max_width_in", 6.3)))
+        if width_in and width_in > 0:
+            disp_w = min(width_in, max_w)
+            disp_h = disp_w * aspect
+        elif height_in and height_in > 0:
+            disp_h = min(height_in, max_h)
+            disp_w = disp_h / max(aspect, 0.01)
+        else:
+            native_w = px_w / 96.0
+            disp_w = min(native_w, max_w)
+            disp_h = disp_w * aspect
+        if disp_h > max_h:
+            disp_h = max_h
+            disp_w = disp_h / max(aspect, 0.01)
+        if disp_w > max_w:
+            disp_w = max_w
+            disp_h = disp_w * aspect
+        return max(disp_w, 0.2), max(disp_h, 0.2)
+
     def render_image(
         self,
         image_path: str | Path,
         caption: Optional[str] = None,
         alt_text: Optional[str] = None,
         container: Optional[Any] = None,
+        width_in: Optional[float] = None,
+        height_in: Optional[float] = None,
+        is_mermaid: bool = False,
     ) -> Tuple[Paragraph, Optional[Paragraph]]:
-        resolved_path = Path(image_path)
-        if not resolved_path.is_absolute():
-            if self.base_dir and (self.base_dir / resolved_path).exists():
-                resolved_path = self.base_dir / resolved_path
-            elif not resolved_path.exists() and self.base_dir:
-                resolved_path = self.base_dir / resolved_path
-
-        # R-03: Validate existence, regular file, non-empty, and format
-        if not resolved_path.exists():
-            raise ConvertError(f"Image not found: '{resolved_path}'")
-        if not resolved_path.is_file():
-            raise ConvertError(f"Image path is not a regular file: '{resolved_path}'")
+        resolved_path = resolve_image_source(str(image_path), self.base_dir)
         if resolved_path.stat().st_size == 0:
             raise ConvertError(f"Image file is empty (0 bytes): '{resolved_path}'")
 
@@ -688,11 +807,9 @@ class DocxRenderer:
         set_paragraph_align(p_img, "center")
         p_img.paragraph_format.space_before = Pt(6)
         p_img.paragraph_format.space_after = Pt(4)
+        set_paragraph_keep(p_img, keep_next=bool(caption), keep_lines=True)
 
-        max_w = float(self.template.mermaid.get("max_width_in", 6.3))
-        disp_w = min(max_w, self.content_width_in)
-        aspect = px_h / max(1, px_w)
-        disp_h = disp_w * aspect
+        disp_w, disp_h = self._fit_image_size(px_w, px_h, width_in, height_in, is_mermaid=is_mermaid)
 
         r_img = p_img.add_run()
         try:
@@ -747,23 +864,14 @@ class DocxRenderer:
         alt_text: Optional[str] = None,
         title: Optional[str] = None,
         max_height_in: float = 1.5,
+        width_in: Optional[float] = None,
+        height_in: Optional[float] = None,
     ) -> Any:
         """
         Embeds an inline image directly within a run of the given paragraph,
         preserving the exact sequential inline order of the Markdown document (R3-02).
-        Sets docPr descr for accessibility.
         """
-        resolved_path = Path(image_path)
-        if not resolved_path.is_absolute():
-            if self.base_dir and (self.base_dir / resolved_path).exists():
-                resolved_path = self.base_dir / resolved_path
-            elif not resolved_path.exists() and self.base_dir:
-                resolved_path = self.base_dir / resolved_path
-
-        if not resolved_path.exists():
-            raise ConvertError(f"Image not found: '{resolved_path}'")
-        if not resolved_path.is_file():
-            raise ConvertError(f"Image path is not a regular file: '{resolved_path}'")
+        resolved_path = resolve_image_source(str(image_path), self.base_dir)
         if resolved_path.stat().st_size == 0:
             raise ConvertError(f"Image file is empty (0 bytes): '{resolved_path}'")
 
@@ -774,12 +882,12 @@ class DocxRenderer:
         except Exception as e:
             raise ConvertError(f"Invalid or corrupted image file '{resolved_path}': {e}") from e
 
-        aspect = px_w / max(1, px_h)
-        target_h_in = min(px_h / 96.0, max_height_in)
-        target_w_in = target_h_in * aspect
-        if target_w_in > self.content_width_in:
-            target_w_in = self.content_width_in
-            target_h_in = target_w_in / max(0.01, aspect)
+        cap_h = min(max_height_in, self.content_height_in)
+        target_w_in, target_h_in = self._fit_image_size(px_w, px_h, width_in, height_in)
+        if target_h_in > cap_h:
+            aspect = px_h / max(1, px_w)
+            target_h_in = cap_h
+            target_w_in = target_h_in / max(aspect, 0.01)
 
         r_img = paragraph.add_run()
         try:
@@ -837,6 +945,7 @@ class DocxRenderer:
             style = get_style_by_name("friendly")
 
         # Resolve Pygments lexer
+        lexer_opts = {"stripnl": False, "stripall": False, "ensurenl": False}
         lexer = None
         if language:
             clean_lang = language.strip().lower()
@@ -844,15 +953,14 @@ class DocxRenderer:
                 try:
                     lexer = guess_lexer(code_str)
                 except Exception:
-                    lexer = TextLexer()
+                    lexer = TextLexer(**lexer_opts)
             else:
                 try:
-                    lexer = get_lexer_by_name(clean_lang)
+                    lexer = get_lexer_by_name(clean_lang, **lexer_opts)
                 except ClassNotFound:
-                    # Unknown language: deterministic fallback to TextLexer (R3-04)
-                    lexer = TextLexer()
+                    lexer = TextLexer(**lexer_opts)
         else:
-            lexer = TextLexer()
+            lexer = TextLexer(**lexer_opts)
 
         # Create 1x1 table for styled code block box
         target = container if container is not None else self.doc
@@ -895,25 +1003,23 @@ class DocxRenderer:
         border_spec = {"val": "single", "sz": border_sz, "color": border_color, "space": 0}
         set_cell_borders(cell, top=border_spec, bottom=border_spec, left=border_spec, right=border_spec)
 
-        # Normalize line endings and strip single trailing newline from fenced block
+        # Normalize line endings. Drop a single trailing newline (fence closer) but
+        # keep leading, internal, and extra trailing blank lines (FIN-09).
         norm_code = code_str.replace("\r\n", "\n").replace("\r", "\n")
         if norm_code.endswith("\n"):
             norm_code = norm_code[:-1]
 
-        # Tokenize and organize into lines
-        tokens = list(lexer.get_tokens(norm_code))
-        lines: List[List[Tuple[Any, str]]] = [[]]
-        for token_type, text in tokens:
-            parts = text.split("\n")
-            for i, part in enumerate(parts):
-                if i > 0:
-                    lines.append([])
-                if part:
-                    lines[-1].append((token_type, part))
-
-        if lines and not lines[-1]:
-            lines.pop()
-
+        # Split on source newlines first so blank lines survive Pygments (FIN-09)
+        physical_lines = norm_code.split("\n")
+        lines: List[List[Tuple[Any, str]]] = []
+        for line in physical_lines:
+            line_tokens: List[Tuple[Any, str]] = []
+            for token_type, text in lexer.get_tokens(line):
+                if text.endswith("\n"):
+                    text = text[:-1]
+                if text:
+                    line_tokens.append((token_type, text))
+            lines.append(line_tokens)
         if not lines:
             lines = [[]]
 

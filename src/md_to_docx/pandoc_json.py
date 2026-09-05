@@ -11,10 +11,11 @@ from docx.table import _Cell
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-from md_to_docx.headings import parse_heading
+from md_to_docx.headings import HeadingInfo, parse_heading
 from md_to_docx.renderer import DocxRenderer
 from md_to_docx.mermaid import ConvertError, CAPTION_RE
 from md_to_docx.bidi import contains_persian, to_persian_digits
+from md_to_docx.omml import tex_to_omml_xml
 from md_to_docx.oxml import (
     set_paragraph_bidi,
     set_paragraph_align,
@@ -34,6 +35,65 @@ DANGEROUS_HTML_RE = re.compile(
     r"<\s*(?:script|iframe|object|embed|applet|style|form|input)\b",
     re.IGNORECASE,
 )
+
+
+def parse_length_in(value: str, available_in: float) -> Optional[float]:
+    raw = str(value).strip().lower()
+    if not raw:
+        return None
+    if raw.endswith("%"):
+        try:
+            return available_in * (float(raw[:-1]) / 100.0)
+        except ValueError:
+            return None
+    units = {"in": 1.0, "cm": 1 / 2.54, "mm": 1 / 25.4, "pt": 1 / 72.0, "px": 1 / 96.0}
+    for suffix, factor in units.items():
+        if raw.endswith(suffix):
+            try:
+                return float(raw[: -len(suffix)]) * factor
+            except ValueError:
+                return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def image_extent_in(attr, renderer: DocxRenderer) -> Tuple[Optional[float], Optional[float]]:
+    kvs = attr[2] if isinstance(attr, list) and len(attr) > 2 and isinstance(attr[2], list) else []
+    kv = {k: v for k, v in kvs if isinstance(k, str)}
+    avail = renderer.available_width_in
+    width = parse_length_in(kv["width"], avail) if "width" in kv else None
+    height = parse_length_in(kv["height"], renderer.content_height_in) if "height" in kv else None
+    return width, height
+
+
+def emit_hyperlink(
+    inner: List[Dict[str, Any]],
+    target: str,
+    renderer: DocxRenderer,
+    paragraph,
+    bold: bool = False,
+    italic: bool = False,
+    font_size_pt: float = 11.0,
+    color_hex: Optional[str] = None,
+) -> None:
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    hyperlink = OxmlElement("w:hyperlink")
+    if target.startswith("#"):
+        hyperlink.set(qn("w:anchor"), target.lstrip("#"))
+    else:
+        r_id = paragraph.part.relate_to(target, RT.HYPERLINK, is_external=True)
+        hyperlink.set(qn("r:id"), r_id)
+    # Emit inner runs into a temporary paragraph, then move them under hyperlink
+    tmp = renderer.doc.add_paragraph()
+    emit_inlines(inner, renderer, tmp, bold=bold, italic=italic, font_size_pt=font_size_pt, color_hex=color_hex or "0563C1")
+    for child in list(tmp._p):
+        if child.tag != qn("w:pPr"):
+            hyperlink.append(child)
+    tmp._p.getparent().remove(tmp._p)
+    paragraph._p.append(hyperlink)
 
 
 def emit_inlines(
@@ -207,7 +267,30 @@ def emit_inlines(
                 force_ltr=True,
                 color_hex=color_hex,
             )
-        elif t in ("Link", "Quoted", "Span"):
+        elif t == "Link":
+            inner = c[1] if isinstance(c, list) and len(c) > 1 and isinstance(c[1], list) else []
+            target = c[2][0] if isinstance(c, list) and len(c) > 2 and isinstance(c[2], list) and c[2] else ""
+            emit_hyperlink(
+                inner,
+                str(target),
+                renderer,
+                paragraph,
+                bold=bold,
+                italic=italic,
+                font_size_pt=font_size_pt,
+                color_hex=color_hex,
+            )
+        elif t == "Quoted":
+            qtype = c[0].get("t") if isinstance(c, list) and c and isinstance(c[0], dict) else "DoubleQuote"
+            inner = c[1] if isinstance(c, list) and len(c) > 1 and isinstance(c[1], list) else []
+            if renderer.template.direction == "rtl":
+                left, right = ("«", "»") if qtype != "SingleQuote" else ("‹", "›")
+            else:
+                left, right = ("\u201c", "\u201d") if qtype != "SingleQuote" else ("\u2018", "\u2019")
+            renderer.append_text(paragraph, left, font_size_pt=font_size_pt, bold=bold, italic=italic, color_hex=color_hex)
+            emit_inlines(inner, renderer, paragraph, bold=bold, italic=italic, font_size_pt=font_size_pt, color_hex=color_hex)
+            renderer.append_text(paragraph, right, font_size_pt=font_size_pt, bold=bold, italic=italic, color_hex=color_hex)
+        elif t == "Span":
             inner = c[1] if isinstance(c, list) and len(c) > 1 and isinstance(c[1], list) else []
             emit_inlines(
                 inner,
@@ -241,21 +324,24 @@ def emit_inlines(
             else:
                 renderer.append_text(paragraph, str(raw_text), font_size_pt=font_size_pt, bold=bold, italic=italic, color_hex=color_hex)
         elif t == "Note":
-            note_text = f" [{blocks_to_text(c)}]" if isinstance(c, list) else f" [{c}]"
-            renderer.append_text(paragraph, note_text, font_size_pt=font_size_pt * 0.85, superscript=True, color_hex=color_hex)
+            renderer.add_footnote(paragraph, c if isinstance(c, list) else [])
         elif t == "Math":
+            math_kind = c[0].get("t") if isinstance(c, list) and c and isinstance(c[0], dict) else "InlineMath"
             math_text = c[1] if isinstance(c, list) and len(c) > 1 else str(c)
-            renderer.append_text(paragraph, math_text, font_size_pt=font_size_pt, italic=True, color_hex=color_hex)
+            renderer.add_omml(paragraph, str(math_text), display=(math_kind == "DisplayMath"))
         elif t == "Image":
             img_src = c[2][0] if isinstance(c, list) and len(c) > 2 and c[2] else ""
             img_title = c[2][1] if isinstance(c, list) and len(c) > 2 and len(c[2]) > 1 else ""
             alt_text = inlines_to_text(c[1]) if isinstance(c, list) and len(c) > 1 and isinstance(c[1], list) else ""
+            width_in, height_in = image_extent_in(c[0] if isinstance(c, list) and c else None, renderer)
             if img_src:
                 renderer.render_inline_image(
                     img_src,
                     paragraph,
                     alt_text=alt_text.strip() or None,
                     title=img_title.strip() or None,
+                    width_in=width_in,
+                    height_in=height_in,
                 )
         elif isinstance(c, str):
             renderer.append_text(paragraph, c, font_size_pt=font_size_pt, bold=bold, italic=italic, color_hex=color_hex)
@@ -263,10 +349,11 @@ def emit_inlines(
             raise ConvertError(f"Unsupported Pandoc AST inline type: '{t}'")
 
 
-def emit_paragraph_inlines(inlines: List[Dict[str, Any]], renderer: DocxRenderer, font_size_pt: float = 11.0):
+def emit_paragraph_inlines(inlines: List[Dict[str, Any]], renderer: DocxRenderer, font_size_pt: Optional[float] = None):
     text = inlines_to_text(inlines)
     p = renderer.begin_paragraph(text, align="both")
-    emit_inlines(inlines, renderer, p, font_size_pt=font_size_pt)
+    size = renderer.body_font_size_pt if font_size_pt is None else font_size_pt
+    emit_inlines(inlines, renderer, p, font_size_pt=size)
     return p
 
 
@@ -538,17 +625,18 @@ def render_ast_table(
         if r_trPr.find(qn("w:cantSplit")) is None:
             r_trPr.append(OxmlElement("w:cantSplit"))
 
-    primary_color = renderer._resolve_color("primary")
+    tbl_cfg = renderer.template.tables or {}
+    primary_color = renderer._resolve_color(tbl_cfg.get("header_bg", "primary"))
+    header_fg = renderer._resolve_color(tbl_cfg.get("header_fg", "on_primary"))
     subtle_hdr_border = {"val": "single", "sz": 4, "color": "542380", "space": 0}
     border_spec = {"val": "single", "sz": 4, "color": "D8D8D8", "space": 0}
 
     # Render header rows
     num_head = len(head_rows)
     for h_idx, head_row in enumerate(head_rows):
-        if h_idx == 0:
-            hdr_trPr = tbl.rows[0]._tr.get_or_add_trPr()
-            if hdr_trPr.find(qn("w:tblHeader")) is None:
-                hdr_trPr.append(OxmlElement("w:tblHeader"))
+        hdr_trPr = tbl.rows[h_idx]._tr.get_or_add_trPr()
+        if hdr_trPr.find(qn("w:tblHeader")) is None:
+            hdr_trPr.append(OxmlElement("w:tblHeader"))
         row_cells = head_row[1] if isinstance(head_row, list) and len(head_row) > 1 and isinstance(head_row[1], list) else []
         for c_idx in range(num_cols):
             cell = tbl.cell(h_idx, c_idx)
@@ -627,8 +715,14 @@ def render_block(
         level = c[0]
         text = inlines_to_text(c[2])
         info = parse_heading(text, level=level)
+        if not renderer.template.headings.get("extract_number", True):
+            info = HeadingInfo(level=level, number=None, title=text, raw_text=text)
+        attr = c[1] if isinstance(c, list) and len(c) > 1 else []
+        heading_id = attr[0] if isinstance(attr, list) and attr else ""
         if container is None:
             renderer.render_heading(info)
+            if heading_id:
+                renderer.add_bookmark(heading_id)
         else:
             p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
             is_rtl = contains_persian(text) if renderer.template.direction == "rtl" else False
@@ -646,6 +740,7 @@ def render_block(
         img_src = None
         img_alt = None
         img_title = None
+        fig_w = fig_h = None
         content_blocks = c[2] if len(c) > 2 else []
         for cb in content_blocks:
             inlines = cb.get("c", []) if isinstance(cb, dict) else []
@@ -654,6 +749,7 @@ def render_block(
                     img_src = inl["c"][2][0]
                     img_title = inl["c"][2][1] if len(inl["c"][2]) > 1 else None
                     img_alt = inlines_to_text(inl["c"][1])
+                    fig_w, fig_h = image_extent_in(inl["c"][0], renderer)
                     break
             if img_src:
                 break
@@ -671,6 +767,8 @@ def render_block(
                 caption=final_caption,
                 alt_text=(img_alt.strip() if img_alt else None),
                 container=container,
+                width_in=fig_w,
+                height_in=fig_h,
             )
 
     elif t in ("Para", "Plain"):
@@ -690,11 +788,14 @@ def render_block(
                 if caption and caption.startswith("fig:"):
                     caption = caption[4:].strip()
                 if img_src:
+                    w_in, h_in = image_extent_in(image.get("c", [None])[0], renderer)
                     renderer.render_image(
                         Path(img_src),
                         caption=caption,
                         alt_text=(alt.strip() if alt else None),
                         container=container,
+                        width_in=w_in,
+                        height_in=h_in,
                     )
         else:
             if container is not None:
@@ -708,7 +809,7 @@ def render_block(
                     set_paragraph_align(p, "both")
                 p.paragraph_format.line_spacing = 1.15
                 p.paragraph_format.space_after = Pt(4)
-                fg_col = renderer._resolve_color("on_primary") if is_header else None
+                fg_col = renderer._resolve_color((renderer.template.tables or {}).get("header_fg", "on_primary")) if is_header else None
                 emit_inlines(c, renderer, p, font_size_pt=10.5, color_hex=fg_col, bold=is_header)
             else:
                 emit_paragraph_inlines(c, renderer)
@@ -735,7 +836,7 @@ def render_block(
                     border_color = renderer._resolve_color(quote_cfg.get("border_color", "primary"))
                     quote_bg = renderer._resolve_color(quote_cfg.get("bg", "quote_bg"))
                     border_sz = renderer.quote_border_sz()
-                    border_side = "right" if renderer.template.direction == "rtl" else "left"
+                    border_side = renderer.quote_border_side()
                     set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15, side=border_side)
                     set_paragraph_shading(p, quote_bg)
                     emit_inlines(b.get("c", []), renderer, p, font_size_pt=10.5, italic=True)
@@ -758,7 +859,7 @@ def render_block(
                         if isinstance(inl, dict) and inl.get("t") == "Image":
                             img_path = inl["c"][2][0]
             if img_path:
-                renderer.render_image(Path(img_path), caption=caption, container=container)
+                renderer.render_image(Path(img_path), caption=caption, container=container, is_mermaid=True)
 
         elif any(cls in renderer.template.callouts for cls in classes):
             cls = next(cl for cl in classes if cl in renderer.template.callouts)

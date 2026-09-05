@@ -230,8 +230,9 @@ def test_comprehensive_markdown_fixture_end_to_end(tmp_path):
     assert "اصطلاح اول" in all_text
     assert "تعریف اصطلاح اول در لیست تعاریف" in all_text
 
-    # 5. Math
-    assert "E = mc^2" in all_text or "E=mc" in all_text
+    # 5. Math is real OMML, not leftover TeX
+    body_xml = doc._body._element.xml
+    assert "m:oMath" in body_xml or "oMath" in body_xml
 
     # 6. Footnote
     assert "این متن پاورقی فنی برای سند است." in all_text or "[1]" in all_text or "پاورقی" in all_text

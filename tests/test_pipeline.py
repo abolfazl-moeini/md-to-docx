@@ -51,10 +51,10 @@ def test_pipeline_golden_xpaths(tmp_path, mocker):
         media_pngs = [f for f in file_list if f.startswith("word/media/") and f.endswith(".png")]
         assert len(media_pngs) >= 1, "Must contain at least one PNG in word/media/"
 
-        # 1. word/settings.xml has //w:settings/w:bidi
-        settings_xml = z.read("word/settings.xml")
-        settings_tree = etree.fromstring(settings_xml)
-        assert len(settings_tree.xpath("//w:settings/w:bidi", namespaces=NS)) >= 1
+        # Section-level bidi (w:bidi is not valid on word/settings.xml)
+        sect_xml = z.read("word/document.xml")
+        sect_tree = etree.fromstring(sect_xml)
+        assert len(sect_tree.xpath("//w:sectPr/w:bidi", namespaces=NS)) >= 1
 
         # 8. word/styles.xml has Normal style with w:rFonts/@w:cs="Vazirmatn"
         styles_xml = z.read("word/styles.xml")
@@ -233,11 +233,13 @@ def test_pipeline_failure_preserves_existing_output_and_media(tmp_path, mocker):
     assert existing_img.read_bytes() == b"EXISTING_PNG_CONTENT"
 
 
-def test_pipeline_reconvert_without_diagrams_cleans_stale_media(tmp_path):
-    """R-02: Verifies that re-converting a document that no longer has diagrams removes old media dir."""
+def test_pipeline_reconvert_without_diagrams_preserves_unrelated_media_files(tmp_path):
+    """FIN-01: Re-converting without diagrams must not rmtree an existing media directory."""
     out_docx = tmp_path / "doc.docx"
     media_dir = tmp_path / "doc_media"
     media_dir.mkdir()
+    keep = media_dir / "keep.txt"
+    keep.write_text("user file", encoding="utf-8")
     (media_dir / "old_diagram.png").write_bytes(b"OLD_PNG")
 
     in_file = tmp_path / "doc.md"
@@ -246,8 +248,8 @@ def test_pipeline_reconvert_without_diagrams_cleans_stale_media(tmp_path):
     convert_markdown_to_docx(in_file, out_docx)
 
     assert out_docx.exists()
-    # Stale media dir should be removed
-    assert not media_dir.exists(), "Stale auto-managed media directory must be cleaned up"
+    assert keep.exists()
+    assert keep.read_text(encoding="utf-8") == "user file"
 
 
 def test_pipeline_concurrency_same_stem(tmp_path):
@@ -345,18 +347,18 @@ def test_pipeline_crash_during_publish_rolls_back_existing_files(tmp_path, mocke
     real_copytree = shutil.copytree
 
     def selective_media_fail(src, dst, *args, **kwargs):
-        if "_media" in str(src) and ".stage_" in str(src):
-            raise OSError("Simulated disk error moving media directory")
+        if "diagram_" in Path(src).name and str(dst).endswith(".tmp"):
+            raise OSError("Simulated disk error copying diagram")
         return real_replace(src, dst, *args, **kwargs)
 
-    def selective_copytree_fail(src, dst, *args, **kwargs):
-        if "_media" in str(src) and ".stage_" in str(src):
-            raise OSError("Simulated disk error copying media directory")
-        return real_copytree(src, dst, *args, **kwargs)
+    real_copy2 = shutil.copy2
 
-    mocker.patch("md_to_docx.pipeline.os.replace", side_effect=selective_media_fail)
-    mocker.patch("md_to_docx.pipeline.shutil.move", side_effect=selective_media_fail)
-    mocker.patch("md_to_docx.pipeline.shutil.copytree", side_effect=selective_copytree_fail)
+    def selective_copy2_fail(src, dst, *args, **kwargs):
+        if "diagram_" in Path(src).name:
+            raise OSError("Simulated disk error copying diagram")
+        return real_copy2(src, dst, *args, **kwargs)
+
+    mocker.patch("md_to_docx.pipeline.shutil.copy2", side_effect=selective_copy2_fail)
 
     with pytest.raises(OSError) as exc_info:
         convert_markdown_to_docx(in_file, out_docx, render_mermaid_fn=mock_render)

@@ -62,6 +62,13 @@ def convert(input_path: str, output_path: str | None, template_name: str, overwr
     else:
         out_file = Path(output_path).resolve()
 
+    if out_file.suffix.lower() == ".doc":
+        click.echo(
+            "Error: Word 97-2003 .doc is not supported. Use a .docx output path.",
+            err=True,
+        )
+        sys.exit(2)
+
     if out_file == in_file:
         click.echo("Error: Output path cannot be identical to input path.", err=True)
         sys.exit(2)
@@ -99,7 +106,7 @@ def convert(input_path: str, output_path: str | None, template_name: str, overwr
         sys.exit(2)
 
     try:
-        saved = convert_markdown_to_docx(in_file, out_file, template=tmpl)
+        saved = convert_markdown_to_docx(in_file, out_file, template=tmpl, overwrite=overwrite)
         click.echo(f"Success: Generated DOCX at '{saved}'")
     except PermissionError as e:
         click.echo(f"Permission Error: {e}", err=True)

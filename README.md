@@ -88,7 +88,9 @@ md2docx templates list
 md2docx templates validate purple_book
 ```
 
-If `-o` is omitted, the output path is the input name with a `.docx` suffix.
+If `-o` is omitted, the output path is the input name with a `.docx` suffix. Output must be **`.docx`** (Word 97-2003 `.doc` is rejected).
+
+Mermaid PNGs are written as `diagram_*.png` into `{output_stem}_media` beside the DOCX (or a dedicated `media_dir` you pass to the Python API). Unrelated files in that folder are never deleted. The DOCX embeds images, so it still opens if the media folder is removed.
 
 ### CLI Exit Codes
 
@@ -115,8 +117,9 @@ The adapter supports standard technical Markdown constructs, translating Pandoc 
 | | `Underline` | Single underline (`w:u`) |
 | | `SmallCaps` | Small caps (`w:smallCaps`) |
 | | `Code` | Inline monospace code (`Courier New`), LTR run |
-| | `Link`, `Quoted`, `Span` | Formatted inner inlines preserved |
-| | `RawInline`, `Note`, `Math` | Preserved and rendered in-place |
+| | `Link`, `Quoted`, `Span` | Real `w:hyperlink` relationships; quote marks preserved; Span children rendered |
+| | `Note` | Word footnotes (`word/footnotes.xml`) |
+| | `Math` | Office Math (`m:oMath`) for common TeX (`\\frac`, `\\sum`, sub/sup) |
 | **Blocks** | `Header` (1–6) | Level-specific size, bottom border, or RTL number badge table |
 | | `Para`, `Plain` | Justified RTL/LTR body paragraphs with line spacing |
 | | `BlockQuote` | Shaded box (`#ECE4F1`) with physical right border (`6B2FA0`) |
@@ -246,7 +249,10 @@ tests/fixtures/     Persian, English, and comprehensive Markdown fixtures
 - **Raw HTML & Comments Policy**: HTML comments (`<!-- ... -->`) are suppressed from the rendered document unless they specify page breaks (`<!-- pagebreak -->`). Line breaks (`<br/>`) emit Word line breaks. Unrecognized dangerous HTML blocks (`<script>`, `<iframe>`) are rejected with `ConvertError`.
 - **Image Alt Text vs. Captions**: Alt text in `![Alt text](image.png)` is embedded as accessibility metadata (`wp:docPr` `descr`), preventing accidental duplicate visible captions. Visible captions are rendered beneath figures only when an explicit title attribute (`"Title"`) or `Figure` caption block is provided.
 - **Code Highlighting & Unknown Language Fallback**: Pygments styles code blocks with distinct token colors for Python, SQL, TypeScript, JSON, etc. Unknown language tags deterministically fall back to `TextLexer` using the configured monospace font and neutral color without guessing.
-- **Transactional Staging & Atomic Rollback**: Conversions stage all output files in an isolated temporary directory. If any failure occurs during diagram compilation, Pandoc parsing, AST rendering, or file publishing, the target DOCX and media directories are cleanly rolled back to their prior state, and staging files are purged.
+- **Dialect**: Pandoc Markdown with `fenced_divs`, `pipe_tables`, `backtick_code_blocks`, `raw_html`, and `lists_without_preceding_blankline`. This is not GitHub-only GFM and not a full HTML importer. Remote `http(s)`/`data:` images are rejected. Table rowspan/colspan is rejected.
+- **Media ownership**: Only `diagram_*.png` files written by this conversion are replaced. Custom `media_dir` must be a dedicated folder (not the Markdown directory, project root, cwd, or output parent).
+- **Publish locking**: An inter-process flock on `{stem}.publish.lock` serializes writers. The lock file is not deleted. Crash recovery restores the previous DOCX when a backup was taken; it is not a two-inode atomic rename of DOCX+media together.
+- **Transactional Staging**: Conversion work happens in a staging directory that is always deleted. DOCX publish uses `os.replace`. Diagram files are copied individually.
 - **Maximum Input File Size**: 20 MB (`MAX_INPUT_SIZE_BYTES = 20 * 1024 * 1024`). Files exceeding this limit fail immediately with `ConvertError` to prevent memory exhaustion.
 - **Mermaid Compilation Timeout**: 60.0 seconds per diagram (`MERMAID_TIMEOUT_SECONDS = 60.0`).
 - **Mermaid Browser Renderer**: Prefers Puppeteer-managed Chrome for Testing over system Chrome.app, passing explicit `executablePath`, `--no-sandbox`, and a matching `headless` mode (`true` for full Chrome, `shell` for chrome-headless-shell). Launch failures retry the next discovered browser. Integration tests skip unless a live mmdc probe succeeds.
@@ -258,6 +264,8 @@ tests/fixtures/     Persian, English, and comprehensive Markdown fixtures
 - Fonts are named in the document, not embedded. Recipients without Vazirmatn will see a substitute.
 - Mermaid is PNG only (Word SVG support is unreliable).
 - Native Word numbering definitions are not used; list markers are text (`-`, `1.`).
+- `shell.docx` is single-section only (document-wide header/footer). Multi-section shells are rejected.
+- Remote images and Word 97 `.doc` output are not supported.
 
 ## Fonts
 

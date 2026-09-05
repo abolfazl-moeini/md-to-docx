@@ -25,8 +25,8 @@ class MermaidSyntaxError(ConvertError):
 
 
 CAPTION_RE = re.compile(r"^(?:شکل|Figure|Fig\.)\s+.*", re.IGNORECASE)
-MERMAID_FENCE_START = re.compile(r"^```mermaid\s*$")
-FENCE_END = re.compile(r"^```\s*$")
+MERMAID_FENCE_START = re.compile(r"^(?P<fence>`{3,}|~{3,})mermaid[ \t]*$")
+FENCE_LINE = re.compile(r"^(?P<fence>`{3,}|~{3,})(?P<info>[^\s`]*)[ \t]*$")
 
 
 @dataclass
@@ -41,63 +41,86 @@ class MermaidBlock:
 
 def extract_mermaid_blocks(markdown_text: str) -> List[MermaidBlock]:
     """
-    Extracts all mermaid code blocks and any immediately following caption line.
-    Raises MermaidSyntaxError with 1-based line number for unclosed or nested fences.
+    Extracts mermaid fences that are not nested inside a longer outer fence.
+    Supports ```mermaid and ~~~mermaid. Raises MermaidSyntaxError for unclosed fences.
     """
     lines = markdown_text.splitlines()
     blocks: List[MermaidBlock] = []
     idx = 0
     i = 0
     num_lines = len(lines)
+    outer_stack: List[Tuple[str, int]] = []
 
     while i < num_lines:
-        line = lines[i]
-        if MERMAID_FENCE_START.match(line):
-            start_line = i
-            code_lines = []
-            i += 1
-            while i < num_lines and not FENCE_END.match(lines[i]):
-                if MERMAID_FENCE_START.match(lines[i]):
-                    raise MermaidSyntaxError(
-                        f"Nested mermaid fence found at line {i + 1} before block at line {start_line + 1} was closed.",
-                        line_number=i + 1,
-                    )
-                code_lines.append(lines[i])
+        fm = FENCE_LINE.match(lines[i])
+        if fm:
+            fence = fm.group("fence")
+            info = (fm.group("info") or "").strip()
+            if outer_stack:
+                top_ch, top_n = outer_stack[-1]
+                if fence[0] == top_ch and len(fence) >= top_n and not info:
+                    outer_stack.pop()
+                    i += 1
+                    continue
                 i += 1
-
-            if i >= num_lines:
-                raise MermaidSyntaxError(
-                    f"Unclosed mermaid code block starting at line {start_line + 1}.",
-                    line_number=start_line + 1,
+                continue
+            if info == "mermaid":
+                start_line = i
+                code_lines: List[str] = []
+                i += 1
+                while i < num_lines:
+                    close_m = FENCE_LINE.match(lines[i])
+                    if (
+                        close_m
+                        and close_m.group("fence")[0] == fence[0]
+                        and len(close_m.group("fence")) >= len(fence)
+                        and not close_m.group("info")
+                    ):
+                        break
+                    nested = MERMAID_FENCE_START.match(lines[i])
+                    if nested and len(nested.group("fence")) <= len(fence):
+                        raise MermaidSyntaxError(
+                            f"Nested mermaid fence found at line {i + 1} before block at line {start_line + 1} was closed.",
+                            line_number=i + 1,
+                        )
+                    code_lines.append(lines[i])
+                    i += 1
+                if i >= num_lines:
+                    raise MermaidSyntaxError(
+                        f"Unclosed mermaid code block starting at line {start_line + 1}.",
+                        line_number=start_line + 1,
+                    )
+                end_line = i
+                caption = None
+                caption_line = None
+                next_line_idx = end_line + 1
+                while next_line_idx < num_lines and not lines[next_line_idx].strip():
+                    next_line_idx += 1
+                if next_line_idx < num_lines:
+                    candidate = lines[next_line_idx].strip()
+                    if CAPTION_RE.match(candidate):
+                        caption = candidate
+                        caption_line = next_line_idx
+                blocks.append(
+                    MermaidBlock(
+                        index=idx,
+                        code="\n".join(code_lines),
+                        caption=caption,
+                        start_line=start_line,
+                        end_line=end_line,
+                        caption_line=caption_line,
+                    )
                 )
-
-            end_line = i  # Closing fence line
-
-            # Check immediately following lines for caption (skipping at most empty lines)
-            caption = None
-            caption_line = None
-            next_line_idx = end_line + 1
-            while next_line_idx < num_lines and not lines[next_line_idx].strip():
-                next_line_idx += 1
-
-            if next_line_idx < num_lines:
-                candidate = lines[next_line_idx].strip()
-                if CAPTION_RE.match(candidate):
-                    caption = candidate
-                    caption_line = next_line_idx
-
-            blocks.append(
-                MermaidBlock(
-                    index=idx,
-                    code="\n".join(code_lines),
-                    caption=caption,
-                    start_line=start_line,
-                    end_line=end_line,
-                    caption_line=caption_line,
-                )
-            )
-            idx += 1
+                idx += 1
+                i += 1
+                continue
+            outer_stack.append((fence[0], len(fence)))
+            i += 1
+            continue
         i += 1
+
+    if outer_stack:
+        raise MermaidSyntaxError("Unclosed code fence in Markdown input.", line_number=num_lines)
 
     return blocks
 
@@ -411,7 +434,10 @@ def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]
         font_file = template.dir_path / font_rel
     if not font_file or not font_file.exists():
         cand = template.dir_path / "fonts" / f"{body_font}-Regular.ttf"
-        font_file = cand if cand.exists() else (template.dir_path / "fonts" / "Vazirmatn-Regular.ttf")
+        font_file = cand if cand.exists() else None
+    if (not font_file or not font_file.exists()) and body_font == "Vazirmatn":
+        vazir = template.dir_path / "fonts" / "Vazirmatn-Regular.ttf"
+        font_file = vazir if vazir.exists() else None
 
     base_css = ""
     if template.mermaid_css_path and template.mermaid_css_path.exists():
@@ -634,4 +660,96 @@ def process_mermaid_blocks(
 
     ending = "\n" if markdown_text.endswith("\n") else ""
     return "\n".join(lines) + ending
+
+
+def _codeblock_language(block: dict) -> Optional[str]:
+    c = block.get("c")
+    if not isinstance(c, list) or not c:
+        return None
+    attr = c[0]
+    classes = attr[1] if isinstance(attr, list) and len(attr) > 1 else []
+    return classes[0] if classes else None
+
+
+def process_mermaid_ast(
+    ast_dict: dict,
+    output_dir: Path,
+    template: Template,
+    render_fn: Optional[Callable[[str, Path, Template], Path]] = None,
+) -> int:
+    """
+    Replace Pandoc CodeBlock nodes with class mermaid by rendered PNG Image nodes.
+    Caption is taken from the following Para/Plain that matches CAPTION_RE.
+    Returns the number of diagrams written.
+    """
+    render = render_fn or render_mermaid_to_png
+    output_dir.mkdir(parents=True, exist_ok=True)
+    counter = {"n": 0}
+
+    def consume_caption(blocks: list, idx: int) -> Optional[str]:
+        j = idx + 1
+        while j < len(blocks):
+            nxt = blocks[j]
+            if nxt.get("t") in ("Para", "Plain"):
+                text = ""
+                for inl in nxt.get("c") or []:
+                    if isinstance(inl, dict) and inl.get("t") == "Str":
+                        text += str(inl.get("c", ""))
+                    elif isinstance(inl, dict) and inl.get("t") in ("Space", "SoftBreak"):
+                        text += " "
+                text = text.strip()
+                if CAPTION_RE.match(text):
+                    blocks.pop(j)
+                    return text
+                return None
+            if nxt.get("t") is None:
+                j += 1
+                continue
+            return None
+        return None
+
+    def walk(blocks: list) -> None:
+        i = 0
+        while i < len(blocks):
+            b = blocks[i]
+            t = b.get("t")
+            c = b.get("c")
+            if t == "CodeBlock" and _codeblock_language(b) == "mermaid":
+                code = c[1] if isinstance(c, list) and len(c) > 1 else ""
+                counter["n"] += 1
+                img_path = output_dir / f"diagram_{counter['n']:03d}.png"
+                render(code, img_path, template)
+                caption = consume_caption(blocks, i)
+                kvs = [["caption", caption]] if caption else []
+                img_node = {
+                    "t": "Image",
+                    "c": [["", [], []], [], [str(img_path), ""]],
+                }
+                blocks[i] = {
+                    "t": "Div",
+                    "c": [
+                        ["", ["mermaid-figure"], kvs],
+                        [{"t": "Para", "c": [img_node]}],
+                    ],
+                }
+                i += 1
+                continue
+            if t == "Div" and isinstance(c, list) and len(c) > 1 and isinstance(c[1], list):
+                walk(c[1])
+            elif t == "BlockQuote" and isinstance(c, list):
+                walk(c)
+            elif t in ("BulletList",) and isinstance(c, list):
+                for item in c:
+                    if isinstance(item, list):
+                        walk(item)
+            elif t == "OrderedList" and isinstance(c, list) and len(c) > 1 and isinstance(c[1], list):
+                for item in c[1]:
+                    if isinstance(item, list):
+                        walk(item)
+            elif t == "Note" and isinstance(c, list):
+                walk(c)
+            i += 1
+
+    walk(ast_dict.get("blocks") or [])
+    return counter["n"]
 

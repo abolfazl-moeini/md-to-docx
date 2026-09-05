@@ -104,8 +104,17 @@ def test_set_table_column_widths():
 
 def test_set_doc_bidi():
     doc = Document()
-    set_doc_bidi(doc)
-    # Check section bidi
+    set_doc_bidi(doc, bidi=True)
     assert "<w:bidi" in doc.sections[0]._sectPr.xml
-    # Check settings bidi
-    assert "<w:bidi" in doc.settings.element.xml
+    assert 'w:val="1"' in doc.sections[0]._sectPr.xml
+    assert "<w:bidi" not in doc.settings.element.xml
+
+
+def test_paragraph_bidi_false_writes_explicit_zero():
+    doc = Document()
+    p = doc.add_paragraph()
+    set_paragraph_bidi(p, bidi=True)
+    set_paragraph_bidi(p, bidi=False)
+    xml = p._p.xml
+    assert 'w:bidi' in xml
+    assert 'w:val="0"' in xml

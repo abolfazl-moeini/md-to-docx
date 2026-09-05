@@ -11,15 +11,13 @@ NSMAP = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 
 def set_paragraph_bidi(paragraph: Paragraph, bidi: bool = True) -> None:
-    """Sets or clears <w:bidi/> on paragraph properties."""
+    """Sets <w:bidi w:val="1|0"/>. Removing the element is not the same as val=0 (style inheritance)."""
     pPr = paragraph._p.get_or_add_pPr()
     existing = pPr.find(qn("w:bidi"))
-    if bidi:
-        if existing is None:
-            pPr.append(OxmlElement("w:bidi"))
-    else:
-        if existing is not None:
-            pPr.remove(existing)
+    if existing is None:
+        existing = OxmlElement("w:bidi")
+        pPr.append(existing)
+    existing.set(qn("w:val"), "1" if bidi else "0")
 
 
 def set_paragraph_align(paragraph: Paragraph, align: str = "both") -> None:
@@ -136,15 +134,13 @@ def set_run_cs_font(
 
 
 def set_run_rtl(run: Run, rtl: bool = True) -> None:
-    """Sets <w:rtl/> on a run. Use ONLY for pure RTL runs (like the heading number badge)."""
+    """Sets <w:rtl w:val="1|0"/>. Absence is not an explicit LTR override against an inherited style."""
     rPr = run._r.get_or_add_rPr()
     existing = rPr.find(qn("w:rtl"))
-    if rtl:
-        if existing is None:
-            rPr.append(OxmlElement("w:rtl"))
-    else:
-        if existing is not None:
-            rPr.remove(existing)
+    if existing is None:
+        existing = OxmlElement("w:rtl")
+        rPr.append(existing)
+    existing.set(qn("w:val"), "1" if rtl else "0")
 
 
 def set_table_bidi_visual(table: Table) -> None:
@@ -324,15 +320,29 @@ def set_paragraph_quote_border(
     border_el.set(qn("w:color"), color_hex.lstrip("#"))
 
 
-def set_doc_bidi(doc: Document) -> None:
-    """Sets document-level and section-level bidi flags."""
-    # Section bidi
+def set_paragraph_keep(paragraph: Paragraph, keep_next: bool = False, keep_lines: bool = False) -> None:
+    pPr = paragraph._p.get_or_add_pPr()
+    if keep_next and pPr.find(qn("w:keepNext")) is None:
+        pPr.append(OxmlElement("w:keepNext"))
+    if keep_lines and pPr.find(qn("w:keepLines")) is None:
+        pPr.append(OxmlElement("w:keepLines"))
+
+
+def set_doc_bidi(doc: Document, bidi: bool = True) -> None:
+    """Sets section-level bidi. w:bidi does not belong on word/settings.xml."""
     for section in doc.sections:
         sectPr = section._sectPr
-        if sectPr.find(qn("w:bidi")) is None:
-            sectPr.append(OxmlElement("w:bidi"))
+        existing = sectPr.find(qn("w:bidi"))
+        if bidi:
+            if existing is None:
+                existing = OxmlElement("w:bidi")
+                sectPr.append(existing)
+            existing.set(qn("w:val"), "1")
+        else:
+            if existing is not None:
+                existing.set(qn("w:val"), "0")
 
-    # Document settings bidi
     settings_el = doc.settings.element
-    if settings_el.find(qn("w:bidi")) is None:
-        settings_el.append(OxmlElement("w:bidi"))
+    stray = settings_el.find(qn("w:bidi"))
+    if stray is not None:
+        settings_el.remove(stray)

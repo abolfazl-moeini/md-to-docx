@@ -86,7 +86,8 @@ def test_render_heading_badge_column_is_narrow(renderer):
     widths = [int(col.get(qn("w:w"))) for col in grid]
     assert len(widths) == 2
     assert widths[0] < widths[1]
-    assert widths[0] <= 1200  # ~0.65in badge, not half-page
+    assert widths[0] < widths[1]
+    assert widths[0] <= 2200  # sized to number length, not half-page
 
 def test_render_note_callout(renderer):
     tbl = renderer.render_callout("note", "نکتهٔ DBA", ["متن داخل کادر نکته"])
@@ -216,7 +217,7 @@ def test_render_code_block_box_styling(renderer):
     assert len(paragraphs) == 2  # 2 lines of code
     for p in paragraphs:
         p_xml = p._p.xml
-        assert '<w:bidi' not in p_xml
+        assert 'w:bidi w:val="0"' in p_xml
         assert 'w:jc w:val="left"' in p_xml
 
     # Check monospaced font
@@ -406,8 +407,8 @@ def test_shell_docx_cleaning_preserves_sectpr_header_footer_and_removes_placehol
     reopened_section = reopened.sections[0]
     assert "Header from shell" in reopened_section.header.paragraphs[0].text
     assert "Footer from shell" in reopened_section.footer.paragraphs[0].text
-    # F-04: shell page size/margins must not be overwritten by template defaults
-    assert abs(int(reopened_section.page_width) - int(shell_doc.sections[0].page_width)) < 200
+    # FIN-10: YAML page size wins over shell geometry (default A4)
+    assert abs(int(reopened_section.page_width) - 7560310) < 5000
 
 
 def test_table_rtl_bidi_visual_and_tblgrid(renderer):
@@ -507,9 +508,8 @@ def test_table_repeating_header_and_cant_split(renderer):
     # Header row has tblHeader in trPr
     assert "<w:tblHeader" in tbl.rows[0]._tr.xml
 
-    # All rows have cantSplit in trPr
-    for row in tbl.rows:
-        assert "<w:cantSplit" in row._tr.xml
+    # Header row may keep together; body rows are allowed to split (FIN-11)
+    assert "<w:cantSplit" in tbl.rows[0]._tr.xml
 
 
 def test_render_page_break(renderer):

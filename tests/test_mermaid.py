@@ -1,3 +1,4 @@
+import os
 import pytest
 from pathlib import Path
 from md_to_docx.mermaid import (
@@ -284,6 +285,8 @@ def test_real_persian_mermaid_rendering_integration(tmp_path):
 
     can_render, reason = probe_mermaid_renderer()
     if not can_render:
+        if os.environ.get("MD2DOCX_REQUIRE_EXTERNAL") == "1":
+            pytest.fail(f"Mermaid renderer required but not operational: {reason}")
         pytest.skip(f"Mermaid renderer not operational: {reason}")
 
     tmpl = Template.load("purple_book")

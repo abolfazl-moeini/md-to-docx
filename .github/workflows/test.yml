@@ -17,11 +17,25 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pandoc
       - name: Install Python package
         run: pip install -c constraints.txt -e ".[dev]"
+      - name: Tool versions
+        run: python -V && pandoc -v | head -n 1
       - name: Unit tests
-        run: python -m pytest tests -q -m "not (mermaid or integration)"
+        run: python -m pytest tests -q -m "not (mermaid or integration)" -k "not test_smoke_wheel_build_and_template_assets"
+
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package and test wheel assets
+        run: pip install -c constraints.txt -e ".[dev]" && python -m pytest tests/test_smoke.py -q -rs
 
   integration:
     runs-on: ubuntu-latest
+    env:
+      MD2DOCX_REQUIRE_EXTERNAL: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,14 +48,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pandoc libreoffice-writer
-      - name: Install Node & Puppeteer Chromium
-        run: |
-          npm ci || npm install
-          npx puppeteer browsers install chrome
+      - name: Install Node from lockfile
+        run: npm ci
+      - name: Install Puppeteer Chromium
+        run: npx puppeteer browsers install chrome
       - name: Install Python package
         run: pip install -c constraints.txt -e ".[dev]"
-      - name: Persian Mermaid end-to-end render test
-        run: python -m pytest tests/test_mermaid.py -k test_real_persian_mermaid_rendering_integration -v -rs
-      - name: End-to-end integration and visual tests
+      - name: Tool versions
+        run: python -V && pandoc -v | head -n 1 && node -v
+      - name: Required mermaid + visual tests
         run: python -m pytest tests -v -rs
-

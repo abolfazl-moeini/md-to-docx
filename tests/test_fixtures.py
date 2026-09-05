@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import zipfile
 import pytest
@@ -58,6 +59,8 @@ def test_convert_all_fixtures_and_retain_on_disk(tmp_path):
         pytest.skip("pandoc is not installed")
     can_render, reason = probe_mermaid_renderer()
     if not can_render:
+        if os.environ.get("MD2DOCX_REQUIRE_EXTERNAL") == "1":
+            pytest.fail(f"Mermaid renderer required but not operational: {reason}")
         pytest.skip(f"Mermaid renderer not operational: {reason}")
 
     # Copy shared image assets

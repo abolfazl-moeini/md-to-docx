@@ -3,6 +3,8 @@
 import re
 from typing import Dict, Optional
 
+from md_to_docx.mermaid import ConvertError, FENCE_LINE
+
 # Matches lines like: ::: note نکتهٔ DBA or ::: warning
 ADMONITION_OPEN_RE = re.compile(
     r"^:::[\t ]+(?P<cls>note|warning|tip|info|danger)(?:[\t ]+(?P<title>.+?))?\s*$"
@@ -40,6 +42,9 @@ def preprocess_admonitions(
     """
     Transforms `::: note [title]` and GFM `> [!NOTE] [title]` into
     `::: {.note title="[title]"}` so pandoc produces a Div with class and title attribute.
+
+    Code fences (backtick/tilde) are skipped so literal `::: note` inside a code block
+    is left unchanged.
     """
     titles = dict(DEFAULT_TITLES)
     if default_titles:
@@ -49,11 +54,31 @@ def preprocess_admonitions(
     transformed_lines = []
     i = 0
     num_lines = len(lines)
+    fence_stack: list[tuple[str, int]] = []
 
     while i < num_lines:
         line = lines[i]
+        fm = FENCE_LINE.match(line)
+        if fm:
+            fence = fm.group("fence")
+            info = (fm.group("info") or "").strip()
+            if fence_stack:
+                top_ch, top_n = fence_stack[-1]
+                if fence[0] == top_ch and len(fence) >= top_n and not info:
+                    fence_stack.pop()
+                transformed_lines.append(line)
+                i += 1
+                continue
+            fence_stack.append((fence[0], len(fence)))
+            transformed_lines.append(line)
+            i += 1
+            continue
 
-        # 1. Check GFM Callout: > [!NOTE]
+        if fence_stack:
+            transformed_lines.append(line)
+            i += 1
+            continue
+
         gfm_match = GFM_CALLOUT_RE.match(line)
         if gfm_match:
             raw_type = gfm_match.group("type").lower()
@@ -65,7 +90,6 @@ def preprocess_admonitions(
             callout_body: list[str] = []
             i += 1
             while i < num_lines and lines[i].startswith(">"):
-                # Strip leading '>' and up to one whitespace
                 cleaned_line = re.sub(r"^>[\t ]?", "", lines[i])
                 callout_body.append(cleaned_line)
                 i += 1
@@ -75,7 +99,6 @@ def preprocess_admonitions(
             transformed_lines.append(":::")
             continue
 
-        # 2. Check pandoc-style: ::: note
         match = ADMONITION_OPEN_RE.match(line)
         if match:
             cls = match.group("cls")
@@ -87,6 +110,8 @@ def preprocess_admonitions(
             transformed_lines.append(line)
         i += 1
 
-    # Preserve trailing newline if input had one
+    if fence_stack:
+        raise ConvertError("Unclosed code fence in Markdown input.")
+
     ending = "\n" if markdown_text.endswith("\n") else ""
     return "\n".join(transformed_lines) + ending

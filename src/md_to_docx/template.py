@@ -30,6 +30,37 @@ PROJECT_ROOT = PACKAGE_DIR.parent.parent
 
 HEX_COLOR_RE = re.compile(r"^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
+ALLOWED_TOP_LEVEL = {
+    "schema_version", "name", "direction", "language_bidi", "language_latin",
+    "fonts", "font_files", "page", "colors", "headings", "callouts", "quotes",
+    "tables", "code_block", "mermaid", "shell",
+}
+
+PAGE_SIZES = {"A4", "Letter", "Legal", "A5"}
+
+
+def normalize_hex_color(value: str, field: str) -> str:
+    raw = str(value).strip()
+    if not HEX_COLOR_RE.match(raw):
+        raise TemplateValidationError(f"Field '{field}' must be a 3- or 6-digit hex color, got '{value}'")
+    hexpart = raw.lstrip("#")
+    if len(hexpart) == 3:
+        hexpart = "".join(ch * 2 for ch in hexpart)
+    return hexpart.upper()
+
+
+def require_number(value: Any, field: str, *, positive: bool = True, allow_zero: bool = False) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TemplateValidationError(f"Field '{field}' must be a finite number, got '{value!r}'")
+    import math
+    if not math.isfinite(float(value)):
+        raise TemplateValidationError(f"Field '{field}' must be a finite number, got '{value!r}'")
+    if positive and value <= 0 and not allow_zero:
+        raise TemplateValidationError(f"Field '{field}' must be a positive number, got '{value}'")
+    if allow_zero and value < 0:
+        raise TemplateValidationError(f"Field '{field}' must be non-negative, got '{value}'")
+    return float(value)
+
 
 class Template:
     """Represents a loaded and validated template."""
@@ -81,10 +112,14 @@ class Template:
         if not relative_name:
             return None
         target = (self.dir_path / relative_name).resolve()
+        field_info = f" for '{field_name}'" if field_name else ""
         if not target.exists():
-            field_info = f" for '{field_name}'" if field_name else ""
             raise TemplateValidationError(
                 f"Referenced file '{relative_name}'{field_info} not found in template directory '{self.dir_path}'."
+            )
+        if target.is_dir():
+            raise TemplateValidationError(
+                f"Referenced path '{relative_name}'{field_info} is a directory; a file is required."
             )
         return target
 
@@ -92,6 +127,11 @@ class Template:
         if self.raw_config.get("schema_version") != 1:
             raise TemplateValidationError(
                 "Template config missing or invalid required field: 'schema_version' (expected 1)"
+            )
+        unknown = [k for k in self.raw_config.keys() if k not in ALLOWED_TOP_LEVEL]
+        if unknown:
+            raise TemplateValidationError(
+                f"Unknown template field(s): {', '.join(sorted(unknown))}"
             )
         for section in REQUIRED_SECTIONS:
             if section not in self.raw_config:
@@ -123,34 +163,32 @@ class Template:
         for col_key in REQUIRED_COLORS:
             if col_key not in colors or not colors[col_key]:
                 raise TemplateValidationError(f"Field 'colors.{col_key}' is required and must not be empty")
-            col_val = str(colors[col_key])
-            if not HEX_COLOR_RE.match(col_val):
-                raise TemplateValidationError(
-                    f"Field 'colors.{col_key}' must be a valid hex color, got '{col_val}'"
-                )
+            colors[col_key] = normalize_hex_color(colors[col_key], f"colors.{col_key}")
 
         page = self.raw_config.get("page")
         if page is not None:
             if not isinstance(page, dict):
                 raise TemplateValidationError("Field 'page' must be a mapping")
+            if "size" in page and str(page["size"]) not in PAGE_SIZES:
+                raise TemplateValidationError(
+                    f"Field 'page.size' must be one of {sorted(PAGE_SIZES)}, got '{page['size']}'"
+                )
             margin_cm = page.get("margin_cm")
             if margin_cm is not None:
                 if not isinstance(margin_cm, dict):
                     raise TemplateValidationError("Field 'page.margin_cm' must be a mapping")
                 for side in ("top", "bottom", "left", "right"):
                     if side in margin_cm:
-                        val = margin_cm[side]
-                        if not isinstance(val, (int, float)) or val <= 0:
-                            raise TemplateValidationError(
-                                f"Field 'page.margin_cm.{side}' must be a positive number, got '{val}'"
-                            )
+                        margin_cm[side] = require_number(margin_cm[side], f"page.margin_cm.{side}")
+                vert = float(margin_cm.get("top", 0)) + float(margin_cm.get("bottom", 0))
+                horiz = float(margin_cm.get("left", 0)) + float(margin_cm.get("right", 0))
+                if vert >= 25 or horiz >= 20:
+                    raise TemplateValidationError(
+                        "Field 'page.margin_cm' leaves no usable content area"
+                    )
             for num_field in ("font_size_pt", "line_spacing"):
                 if num_field in page:
-                    val = page[num_field]
-                    if not isinstance(val, (int, float)) or val <= 0:
-                        raise TemplateValidationError(
-                            f"Field 'page.{num_field}' must be a positive number, got '{val}'"
-                        )
+                    page[num_field] = require_number(page[num_field], f"page.{num_field}")
 
         headings = self.raw_config.get("headings")
         if headings is not None:
@@ -163,11 +201,7 @@ class Template:
             for h in ("h1", "h2", "h3"):
                 if h in headings and isinstance(headings[h], dict):
                     if "size_pt" in headings[h]:
-                        sz = headings[h]["size_pt"]
-                        if not isinstance(sz, (int, float)) or sz <= 0:
-                            raise TemplateValidationError(
-                                f"Field 'headings.{h}.size_pt' must be a positive number, got '{sz}'"
-                            )
+                        headings[h]["size_pt"] = require_number(headings[h]["size_pt"], f"headings.{h}.size_pt")
                     for col_field in ("badge_bg", "badge_fg"):
                         if col_field in headings[h]:
                             cval = str(headings[h][col_field])

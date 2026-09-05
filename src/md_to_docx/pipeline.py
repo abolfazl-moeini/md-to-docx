@@ -11,9 +11,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from md_to_docx.template import Template
+from md_to_docx.template import Template, PROJECT_ROOT
 from md_to_docx.admonitions import preprocess_admonitions
-from md_to_docx.mermaid import process_mermaid_blocks, ConvertError
+from md_to_docx.mermaid import process_mermaid_ast, ConvertError
 from md_to_docx.pandoc_json import ast_to_docx
 from md_to_docx.renderer import DocxRenderer
 
@@ -61,33 +61,63 @@ _THREAD_LOCK = threading.Lock()
 @contextlib.contextmanager
 def _publish_lock(lock_path: Path):
     """
-    Acquires an in-process thread lock and an inter-process file lock (flock)
-    to guarantee safe atomic publishing and eliminate race conditions during concurrent runs (R-04).
+    Inter-process exclusive lock. The lock file is kept (not unlinked) so waiters
+    share the same inode. Failure to lock is an error, not a silent fallback.
     """
     with _THREAD_LOCK:
-        lock_fd = None
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            try:
-                import fcntl
-                lock_path.parent.mkdir(parents=True, exist_ok=True)
-                lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            except (ImportError, OSError):
-                lock_fd = None
+            import fcntl
+        except ImportError as e:
+            raise ConvertError(
+                "Inter-process publish locking requires fcntl (unavailable on this platform)."
+            ) from e
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        except OSError as e:
+            os.close(lock_fd)
+            raise ConvertError(f"Could not acquire publish lock '{lock_path}': {e}") from e
+        try:
             yield
         finally:
-            if lock_fd is not None:
-                try:
-                    import fcntl
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                    os.close(lock_fd)
-                except OSError:
-                    pass
-                try:
-                    if lock_path.exists():
-                        lock_path.unlink()
-                except OSError:
-                    pass
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(lock_fd)
+
+
+def _assert_safe_media_dir(media: Path, in_file: Path, out_file: Path) -> None:
+    forbidden = {
+        in_file.parent.resolve(),
+        PROJECT_ROOT.resolve(),
+        Path.cwd().resolve(),
+        out_file.parent.resolve(),
+        Path("/").resolve(),
+    }
+    if media in forbidden:
+        raise ConvertError(
+            f"Refusing to use '{media}' as media_dir because it is the input folder, "
+            "project root, cwd, or output parent. Use a dedicated subdirectory."
+        )
+
+
+def _publish_diagrams(stage_media_dir: Path, target_media_dir: Path) -> None:
+    """Copy only managed diagram_*.png files; never rmtree the whole target directory."""
+    target_media_dir.mkdir(parents=True, exist_ok=True)
+    incoming = sorted(stage_media_dir.glob("diagram_*.png"))
+    new_names = {src.name for src in incoming}
+    for src in incoming:
+        shutil.copy2(str(src), str(target_media_dir / (src.name + ".tmp")))
+    for src in incoming:
+        os.replace(str(target_media_dir / (src.name + ".tmp")), str(target_media_dir / src.name))
+    for old in target_media_dir.glob("diagram_*.png"):
+        if old.name not in new_names:
+            try:
+                old.unlink()
+            except OSError:
+                pass
 
 
 def convert_markdown_to_docx(
@@ -96,6 +126,7 @@ def convert_markdown_to_docx(
     template: str | Path | Template = "purple_book",
     render_mermaid_fn: Optional[Callable] = None,
     media_dir: Optional[str | Path] = None,
+    overwrite: bool = True,
 ) -> Path:
     """
     Executes the full conversion pipeline from Markdown to styled DOCX.
@@ -158,74 +189,52 @@ def convert_markdown_to_docx(
         }
         admon_processed = preprocess_admonitions(raw_text, default_titles=default_titles)
 
-        # 4. Preprocess Mermaid diagrams into staging media directory
-        mermaid_processed = process_mermaid_blocks(
-            admon_processed,
+        # 4. Parse to Pandoc JSON AST, then render Mermaid CodeBlocks in-tree (FIN-06)
+        ast_data = run_pandoc_ast(admon_processed)
+        n_diagrams = process_mermaid_ast(
+            ast_data,
             output_dir=stage_media_dir,
             template=tmpl,
             render_fn=render_mermaid_fn,
         )
 
-        # 5. Parse to Pandoc JSON AST
-        ast_data = run_pandoc_ast(mermaid_processed)
-
-        # 6. Initialize Renderer and Translate AST to DOCX
+        # 5. Initialize Renderer and Translate AST to DOCX
         renderer = DocxRenderer(template=tmpl, base_dir=in_file.parent)
         ast_to_docx(ast_data, renderer)
 
-        # 7. Save to staged DOCX file first
+        # 6. Save to staged DOCX file first
         renderer.doc.save(str(stage_docx))
 
-        # 8. Atomic Publish (R-02 / R-04)
+        # 7. Publish DOCX; only managed diagram_*.png files are written to media_dir (FIN-01)
         target_media_dir = Path(media_dir).resolve() if media_dir else out_file.parent / f"{out_file.stem}_media"
-        diagram_files = list(stage_media_dir.glob("*.png"))
+        if media_dir is not None:
+            _assert_safe_media_dir(target_media_dir, in_file, out_file)
         lock_path = out_file.parent / f".{out_file.stem}.publish.lock"
 
         with _publish_lock(lock_path):
-            backup_docx: Optional[Path] = None
-            backup_media: Optional[Path] = None
-            docx_previously_existed = out_file.exists()
-            media_previously_existed = target_media_dir.exists()
+            if out_file.exists() and not overwrite:
+                raise ConvertError(
+                    f"Output file '{out_file}' already exists. Pass overwrite=True or --overwrite."
+                )
 
+            backup_docx: Optional[Path] = None
+            docx_previously_existed = out_file.exists()
             if docx_previously_existed:
                 backup_docx = out_file.with_name(f".backup_{out_file.name}_{uuid.uuid4().hex[:8]}")
                 shutil.copy2(str(out_file), str(backup_docx))
 
-            if media_previously_existed:
-                backup_media = target_media_dir.with_name(f".backup_{target_media_dir.name}_{uuid.uuid4().hex[:8]}")
-                try:
-                    os.replace(target_media_dir, backup_media)
-                except OSError:
-                    shutil.copytree(str(target_media_dir), str(backup_media))
-                    shutil.rmtree(target_media_dir, ignore_errors=True)
-
             try:
-                # Move staged docx to final destination
                 try:
                     os.replace(stage_docx, out_file)
                 except OSError:
                     shutil.move(str(stage_docx), str(out_file))
 
-                # Publish media directory if diagrams were produced
-                if diagram_files:
-                    try:
-                        os.replace(stage_media_dir, target_media_dir)
-                    except OSError:
-                        if target_media_dir.exists():
-                            shutil.rmtree(target_media_dir, ignore_errors=True)
-                        shutil.copytree(str(stage_media_dir), str(target_media_dir))
-                elif media_dir is None and backup_media:
-                    # Clean up stale auto-managed media directory from a previous run without diagrams (R-02)
-                    pass
+                if n_diagrams > 0:
+                    _publish_diagrams(stage_media_dir, target_media_dir)
 
-                # Success: cleanup backups
                 if backup_docx and backup_docx.exists():
                     backup_docx.unlink(missing_ok=True)
-                if backup_media and backup_media.exists():
-                    shutil.rmtree(backup_media, ignore_errors=True)
-
             except Exception:
-                # Rollback docx and media on failure (R3-05)
                 if backup_docx and backup_docx.exists():
                     try:
                         os.replace(backup_docx, out_file)
@@ -233,17 +242,6 @@ def convert_markdown_to_docx(
                         shutil.move(str(backup_docx), str(out_file))
                 elif not docx_previously_existed and out_file.exists():
                     out_file.unlink(missing_ok=True)
-
-                if backup_media and backup_media.exists():
-                    if target_media_dir.exists():
-                        shutil.rmtree(target_media_dir, ignore_errors=True)
-                    try:
-                        os.replace(backup_media, target_media_dir)
-                    except OSError:
-                        shutil.move(str(backup_media), str(target_media_dir))
-                elif not media_previously_existed and target_media_dir.exists():
-                    shutil.rmtree(target_media_dir, ignore_errors=True)
-
                 raise
 
         return out_file

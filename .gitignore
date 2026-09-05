@@ -25,3 +25,4 @@ npm-debug.log*
 /out.docx
 /*.docx
 *_media/
+*.publish.lock
