@@ -160,3 +160,214 @@ def test_pipeline_missing_mermaid_cli_raises_informative_error(tmp_path, mocker)
     err_str = str(exc_info.value)
     assert "executable not found" in err_str or "Mermaid CLI" in err_str
     assert "npm install" in err_str or "bootstrap" in err_str
+
+
+def test_pipeline_failure_during_pandoc_cleans_up_staging_and_leaves_no_artifacts(tmp_path, mocker):
+    """R-02: Verifies that a failure during Pandoc parsing cleans up staging and leaves no docx or orphan media."""
+    stub_png = Path(__file__).parent / "fixtures" / "diagram-stub.png"
+
+    def mock_render(code, out_path, template):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(stub_png.read_bytes())
+        return out_path
+
+    in_file = tmp_path / "doc.md"
+    in_file.write_text("# Doc\n\n```mermaid\ngraph TD\nA-->B\n```\n", encoding="utf-8")
+    out_docx = tmp_path / "doc.docx"
+    media_dir = tmp_path / "doc_media"
+
+    mocker.patch("md_to_docx.pipeline.run_pandoc_ast", side_effect=ConvertError("Pandoc syntax error"))
+
+    with pytest.raises(ConvertError) as exc_info:
+        convert_markdown_to_docx(in_file, out_docx, render_mermaid_fn=mock_render)
+    assert "Pandoc syntax error" in str(exc_info.value)
+
+    # DOCX must not exist
+    assert not out_docx.exists(), "Failed conversion must not leave output DOCX"
+    # Media dir must not exist
+    assert not media_dir.exists(), "Failed conversion must not leave orphan media"
+    # Staging directories starting with .stage_doc_ must be cleaned up
+    staging_dirs = list(tmp_path.glob(".stage_doc_*"))
+    assert len(staging_dirs) == 0, "Staging directory must be deleted on failure"
+
+
+def test_pipeline_failure_during_mermaid_cleans_up_staging_and_leaves_no_artifacts(tmp_path):
+    """R-02: Verifies that a failure during Mermaid diagram compilation leaves no output or orphan media."""
+    def failing_render(code, out_path, template):
+        raise ConvertError("Puppeteer browser crash")
+
+    in_file = tmp_path / "doc.md"
+    in_file.write_text("# Doc\n\n```mermaid\ngraph TD\nA-->B\n```\n", encoding="utf-8")
+    out_docx = tmp_path / "doc.docx"
+    media_dir = tmp_path / "doc_media"
+
+    with pytest.raises(ConvertError) as exc_info:
+        convert_markdown_to_docx(in_file, out_docx, render_mermaid_fn=failing_render)
+    assert "Puppeteer browser crash" in str(exc_info.value)
+
+    assert not out_docx.exists()
+    assert not media_dir.exists()
+    staging_dirs = list(tmp_path.glob(".stage_doc_*"))
+    assert len(staging_dirs) == 0
+
+
+def test_pipeline_failure_preserves_existing_output_and_media(tmp_path, mocker):
+    """R-02: Verifies that if previous valid output exists, a failed conversion does NOT overwrite or destroy it."""
+    out_docx = tmp_path / "doc.docx"
+    out_docx.write_bytes(b"EXISTING_DOCX_CONTENT")
+    media_dir = tmp_path / "doc_media"
+    media_dir.mkdir()
+    existing_img = media_dir / "diagram_001.png"
+    existing_img.write_bytes(b"EXISTING_PNG_CONTENT")
+
+    in_file = tmp_path / "doc.md"
+    in_file.write_text("# Doc\n\n```mermaid\ngraph TD\nA-->B\n```\n", encoding="utf-8")
+
+    mocker.patch("md_to_docx.pipeline.run_pandoc_ast", side_effect=ConvertError("Pandoc crashed"))
+
+    with pytest.raises(ConvertError):
+        convert_markdown_to_docx(in_file, out_docx)
+
+    # Existing content preserved intact
+    assert out_docx.read_bytes() == b"EXISTING_DOCX_CONTENT"
+    assert existing_img.read_bytes() == b"EXISTING_PNG_CONTENT"
+
+
+def test_pipeline_reconvert_without_diagrams_cleans_stale_media(tmp_path):
+    """R-02: Verifies that re-converting a document that no longer has diagrams removes old media dir."""
+    out_docx = tmp_path / "doc.docx"
+    media_dir = tmp_path / "doc_media"
+    media_dir.mkdir()
+    (media_dir / "old_diagram.png").write_bytes(b"OLD_PNG")
+
+    in_file = tmp_path / "doc.md"
+    in_file.write_text("# Simple Doc Without Any Mermaid Diagrams\n\nPlain text paragraph.\n", encoding="utf-8")
+
+    convert_markdown_to_docx(in_file, out_docx)
+
+    assert out_docx.exists()
+    # Stale media dir should be removed
+    assert not media_dir.exists(), "Stale auto-managed media directory must be cleaned up"
+
+
+def test_pipeline_concurrency_same_stem(tmp_path):
+    """R-04: Verifies concurrent conversions with identical output stem run safely without corruption."""
+    from concurrent.futures import ThreadPoolExecutor
+    stub_png = Path(__file__).parent / "fixtures" / "diagram-stub.png"
+
+    def mock_render(code, out_path, template):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(stub_png.read_bytes())
+        return out_path
+
+    md_file = tmp_path / "shared.md"
+    md_file.write_text(
+        "# Concurrent Test\n\n```mermaid\ngraph TD\nA-->B\n```\nشکل ۱. تست\n",
+        encoding="utf-8",
+    )
+    out_docx = tmp_path / "shared.docx"
+
+    def run_conv(iteration: int):
+        return convert_markdown_to_docx(md_file, out_docx, render_mermaid_fn=mock_render)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(run_conv, i) for i in range(4)]
+        results = [f.result() for f in futures]
+
+    assert all(r == out_docx.resolve() for r in results)
+    assert out_docx.exists()
+    assert zipfile.is_zipfile(out_docx)
+
+    media_dir = tmp_path / "shared_media"
+    assert media_dir.exists()
+    pngs = list(media_dir.glob("*.png"))
+    assert len(pngs) >= 1
+    # Check NO nested subdirectories created inside media_dir
+    subdirs = [p for p in media_dir.iterdir() if p.is_dir()]
+    assert len(subdirs) == 0, f"No nested subdirectories should exist in media_dir, found {subdirs}"
+
+
+def test_pipeline_crash_during_pandoc_cleans_up_staging(tmp_path, mocker):
+    """R3-05: Verifies that if Pandoc crashes, staging directories are removed and no artifacts leak."""
+    mocker.patch("md_to_docx.pipeline.run_pandoc_ast", side_effect=RuntimeError("Simulated Pandoc Crash"))
+    in_file = tmp_path / "test.md"
+    in_file.write_text("# Test Title\nSome content.", encoding="utf-8")
+    out_docx = tmp_path / "out.docx"
+
+    with pytest.raises(RuntimeError) as exc_info:
+        convert_markdown_to_docx(in_file, out_docx)
+    assert "Simulated Pandoc Crash" in str(exc_info.value)
+
+    assert not out_docx.exists()
+    staged = [p for p in tmp_path.iterdir() if p.name.startswith(".stage_")]
+    assert len(staged) == 0, f"Staging directories must be cleaned up on failure: {staged}"
+
+
+def test_pipeline_crash_during_ast_cleans_up_staging(tmp_path, mocker):
+    """R3-05: Verifies that if AST translation crashes, staging directories are removed."""
+    mocker.patch("md_to_docx.pipeline.ast_to_docx", side_effect=ValueError("Simulated AST translation failure"))
+    in_file = tmp_path / "test.md"
+    in_file.write_text("# Test Title\nSome content.", encoding="utf-8")
+    out_docx = tmp_path / "out.docx"
+
+    with pytest.raises(ValueError) as exc_info:
+        convert_markdown_to_docx(in_file, out_docx)
+    assert "Simulated AST translation failure" in str(exc_info.value)
+
+    assert not out_docx.exists()
+    staged = [p for p in tmp_path.iterdir() if p.name.startswith(".stage_")]
+    assert len(staged) == 0, f"Staging directories must be cleaned up on failure: {staged}"
+
+
+def test_pipeline_crash_during_publish_rolls_back_existing_files(tmp_path, mocker):
+    """R3-05: Verifies transactional rollback if publishing media fails after docx replace."""
+    out_docx = tmp_path / "doc.docx"
+    out_docx.write_bytes(b"ORIGINAL_DOCX_V1")
+
+    media_dir = tmp_path / "doc_media"
+    media_dir.mkdir()
+    orig_img = media_dir / "diagram_001.png"
+    orig_img.write_bytes(b"ORIGINAL_PNG_V1")
+
+    stub_png = Path(__file__).parent / "fixtures" / "diagram-stub.png"
+
+    def mock_render(code, out_path, template):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(stub_png.read_bytes())
+        return out_path
+
+    in_file = tmp_path / "doc.md"
+    in_file.write_text("# New Title\n```mermaid\ngraph TD\nA-->B\n```\nشکل ۱. تست\n", encoding="utf-8")
+
+    import os
+    import shutil
+    real_replace = os.replace
+    real_copytree = shutil.copytree
+
+    def selective_media_fail(src, dst, *args, **kwargs):
+        if "_media" in str(src) and ".stage_" in str(src):
+            raise OSError("Simulated disk error moving media directory")
+        return real_replace(src, dst, *args, **kwargs)
+
+    def selective_copytree_fail(src, dst, *args, **kwargs):
+        if "_media" in str(src) and ".stage_" in str(src):
+            raise OSError("Simulated disk error copying media directory")
+        return real_copytree(src, dst, *args, **kwargs)
+
+    mocker.patch("md_to_docx.pipeline.os.replace", side_effect=selective_media_fail)
+    mocker.patch("md_to_docx.pipeline.shutil.move", side_effect=selective_media_fail)
+    mocker.patch("md_to_docx.pipeline.shutil.copytree", side_effect=selective_copytree_fail)
+
+    with pytest.raises(OSError) as exc_info:
+        convert_markdown_to_docx(in_file, out_docx, render_mermaid_fn=mock_render)
+    assert "Simulated disk error" in str(exc_info.value)
+
+    # Rollback assertion: original docx and media must be preserved intact!
+    assert out_docx.exists()
+    assert out_docx.read_bytes() == b"ORIGINAL_DOCX_V1", "Original docx must be rolled back on publish failure"
+    assert orig_img.exists()
+    assert orig_img.read_bytes() == b"ORIGINAL_PNG_V1", "Original media must be rolled back on publish failure"
+
+    # No leftover staging or backup files
+    staged = [p for p in tmp_path.iterdir() if p.name.startswith((".stage_", ".backup_", ".trash_"))]
+    assert len(staged) == 0, f"No temporary or backup files should remain: {staged}"

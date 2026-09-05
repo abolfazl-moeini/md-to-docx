@@ -424,6 +424,198 @@ def test_ast_to_docx_line_break_emits_w_br():
     assert "\n" not in "".join(doc.paragraphs[0]._p.xpath(".//w:t/text()"))
 
 
+def test_ast_to_docx_table_rowspan_raises_convert_error():
+    from md_to_docx.mermaid import ConvertError
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Table",
+                "c": [
+                    ["", [], []],
+                    [None, []],
+                    [],
+                    ["", []],
+                    [
+                        ["", 0, [], [[["", [], []], [[None, [], 2, 1, [{"t": "Plain", "c": [{"t": "Str", "c": "spanned"}]}]]]]]],
+                    ],
+                    [],
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl)
+    with pytest.raises(ConvertError) as exc_info:
+        ast_to_docx(ast_dict, renderer)
+    err = str(exc_info.value)
+    assert "row-span" in err or "col-span" in err
+    assert "rowspan=2" in err
+    assert "root.blocks[0].Table" in err
+
+
+def test_ast_to_docx_table_colspan_raises_convert_error():
+    from md_to_docx.mermaid import ConvertError
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Table",
+                "c": [
+                    ["", [], []],
+                    [None, []],
+                    [],
+                    ["", []],
+                    [
+                        ["", 0, [], [[["", [], []], [[None, [], 1, 3, [{"t": "Plain", "c": [{"t": "Str", "c": "wide"}]}]]]]]],
+                    ],
+                    [],
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl)
+    with pytest.raises(ConvertError) as exc_info:
+        ast_to_docx(ast_dict, renderer)
+    err = str(exc_info.value)
+    assert "colspan=3" in err
+    assert "root.blocks[0].Table" in err
+
+
+def test_ast_to_docx_unknown_nested_in_callout_raises():
+    from md_to_docx.mermaid import ConvertError
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Div",
+                "c": [
+                    ["", ["note"], [["title", "نکته"]]],
+                    [{"t": "MysteryNestedBlock", "c": []}],
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl)
+    with pytest.raises(ConvertError) as exc_info:
+        ast_to_docx(ast_dict, renderer)
+    err = str(exc_info.value)
+    assert "MysteryNestedBlock" in err
+    assert "Div[note]" in err
+
+
+def test_ast_to_docx_unknown_nested_in_table_cell_raises():
+    from md_to_docx.mermaid import ConvertError
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Table",
+                "c": [
+                    ["", [], []],
+                    [None, []],
+                    [],
+                    ["", []],
+                    [
+                        ["", 0, [], [[["", [], []], [[None, [], 1, 1, [{"t": "CellMystery", "c": []}]]]]]],
+                    ],
+                    [],
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl)
+    with pytest.raises(ConvertError) as exc_info:
+        ast_to_docx(ast_dict, renderer)
+    err = str(exc_info.value)
+    assert "CellMystery" in err
+    assert "Table" in err
+
+
+def test_ast_to_docx_mixed_image_and_text_does_not_drop_image(tmp_path):
+    stub = Path(__file__).parent / "fixtures" / "diagram-stub.png"
+    dest = tmp_path / "pic.png"
+    dest.write_bytes(stub.read_bytes())
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Para",
+                "c": [
+                    {
+                        "t": "Image",
+                        "c": [["", [], []], [{"t": "Str", "c": "alt"}], [str(dest), ""]],
+                    },
+                    {"t": "Space"},
+                    {"t": "Str", "c": "متن کنار تصویر"},
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl, base_dir=tmp_path)
+    ast_to_docx(ast_dict, renderer)
+    full_xml = doc._body._element.xml
+    assert "a:blip" in full_xml or "v:imagedata" in full_xml or "word/media" in full_xml
+    assert any("متن کنار تصویر" in p.text for p in doc.paragraphs)
+
+
+def test_ast_to_docx_sequential_inline_image_ordering(tmp_path):
+    """R3-02: Verifies that inline images maintain sequential order within paragraph."""
+    stub = Path(__file__).parent / "fixtures" / "diagram-stub.png"
+    dest = tmp_path / "inline_pic.png"
+    dest.write_bytes(stub.read_bytes())
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Para",
+                "c": [
+                    {"t": "Str", "c": "پیش‌متن"},
+                    {"t": "Space"},
+                    {
+                        "t": "Image",
+                        "c": [["", [], []], [{"t": "Str", "c": "alt"}], [str(dest), "title"]],
+                    },
+                    {"t": "Space"},
+                    {"t": "Str", "c": "پس‌متن"},
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl, base_dir=tmp_path)
+    ast_to_docx(ast_dict, renderer)
+
+    assert len(doc.paragraphs) == 1
+    p = doc.paragraphs[0]
+    assert "پیش‌متن" in p.text
+    assert "پس‌متن" in p.text
+    p_xml = p._p.xml
+    assert "w:drawing" in p_xml or "a:blip" in p_xml or "w:pict" in p_xml
+    idx_pre = p_xml.find("پیش‌متن")
+    idx_draw = p_xml.find("w:drawing")
+    if idx_draw == -1:
+        idx_draw = p_xml.find("a:blip")
+    idx_post = p_xml.find("پس‌متن")
+    assert idx_pre < idx_draw < idx_post
+
+
 def test_ast_to_docx_raw_block_pagebreak():
     """F-12: Verifies that raw \\pagebreak directives produce actual page breaks."""
     ast_dict = {
@@ -442,5 +634,122 @@ def test_ast_to_docx_raw_block_pagebreak():
 
     full_xml = doc._body._element.xml
     assert 'w:type="page"' in full_xml
+
+
+def test_multiple_inline_images_and_links(tmp_path):
+    """R3-02: Verifies multiple inline images and linked images maintain correct order and embed."""
+    stub = Path(__file__).parent / "fixtures" / "diagram-stub.png"
+    img1 = tmp_path / "img1.png"
+    img2 = tmp_path / "img2.png"
+    img1.write_bytes(stub.read_bytes())
+    img2.write_bytes(stub.read_bytes())
+
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Para",
+                "c": [
+                    {"t": "Str", "c": "آغاز"},
+                    {"t": "Space"},
+                    {"t": "Image", "c": [["", [], []], [{"t": "Str", "c": "تصویر ۱"}], [str(img1), ""]]},
+                    {"t": "Space"},
+                    {"t": "Str", "c": "میانه"},
+                    {"t": "Space"},
+                    {
+                        "t": "Link",
+                        "c": [
+                            ["", [], []],
+                            [{"t": "Image", "c": [["", [], []], [{"t": "Str", "c": "تصویر ۲"}], [str(img2), ""]]}],
+                            ["https://example.com", ""],
+                        ],
+                    },
+                    {"t": "Space"},
+                    {"t": "Str", "c": "پایان"},
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl, base_dir=tmp_path)
+    ast_to_docx(ast_dict, renderer)
+
+    assert len(doc.paragraphs) == 1
+    p = doc.paragraphs[0]
+    drawings = p._p.xpath(".//w:drawing")
+    assert len(drawings) == 2, "Expected 2 inline image drawings in paragraph"
+    p_xml = p._p.xml
+    pos_start = p_xml.find("آغاز")
+    pos_mid = p_xml.find("میانه")
+    pos_end = p_xml.find("پایان")
+    assert pos_start < pos_mid < pos_end
+
+
+def test_standalone_image_alt_text_not_rendered_as_visible_caption(tmp_path):
+    """R3-02: Alt text must set docPr descr for accessibility, NOT render as a visible caption paragraph."""
+    stub = Path(__file__).parent / "fixtures" / "diagram-stub.png"
+    img = tmp_path / "standalone.png"
+    img.write_bytes(stub.read_bytes())
+
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Para",
+                "c": [
+                    {"t": "Image", "c": [["", [], []], [{"t": "Str", "c": "توضیح alt برای نابینایان"}], [str(img), ""]]}
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl, base_dir=tmp_path)
+    ast_to_docx(ast_dict, renderer)
+
+    # Standalone image with only alt text should NOT generate a second caption paragraph
+    assert len(doc.paragraphs) == 1, f"Expected exactly 1 paragraph (image only), found {len(doc.paragraphs)}"
+    # Alt text must NOT appear in visible paragraph text
+    assert "توضیح alt برای نابینایان" not in doc.paragraphs[0].text
+    # Alt text must be in wp:docPr descr attribute
+    docPr_descr = doc.paragraphs[0]._p.xpath(".//wp:docPr/@descr")
+    assert docPr_descr == ["توضیح alt برای نابینایان"]
+
+
+def test_standalone_image_title_rendered_as_visible_caption(tmp_path):
+    """R3-02: Image title must render as visible caption paragraph beneath image."""
+    stub = Path(__file__).parent / "fixtures" / "diagram-stub.png"
+    img = tmp_path / "titled.png"
+    img.write_bytes(stub.read_bytes())
+
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Para",
+                "c": [
+                    {
+                        "t": "Image",
+                        "c": [["", [], []], [{"t": "Str", "c": "توضیح alt"}], [str(img), "عنوان واقعی زیر تصویر"]],
+                    }
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl, base_dir=tmp_path)
+    ast_to_docx(ast_dict, renderer)
+
+    assert len(doc.paragraphs) == 2, f"Expected 2 paragraphs (image + caption), found {len(doc.paragraphs)}"
+    assert "توضیح alt" not in doc.paragraphs[1].text
+    assert "عنوان واقعی زیر تصویر" in doc.paragraphs[1].text
+    docPr_descr = doc.paragraphs[0]._p.xpath(".//wp:docPr/@descr")
+    assert docPr_descr == ["توضیح alt"]
+
 
 

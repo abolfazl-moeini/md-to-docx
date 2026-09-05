@@ -42,13 +42,17 @@ fi
 echo "Activating virtualenv and installing Python dependencies..."
 VENV_PIP=".venv/bin/pip"
 "$VENV_PIP" install --upgrade pip setuptools wheel
-"$VENV_PIP" install -e ".[dev]"
+if [ -f "constraints.txt" ]; then
+    "$VENV_PIP" install -c constraints.txt -e ".[dev]"
+else
+    "$VENV_PIP" install -e ".[dev]"
+fi
 echo "✔ Python dependencies installed."
 
 # 3. Check and setup Node.js & npm
 if command -v npm >/dev/null 2>&1; then
     echo "Installing Node.js dependencies via npm..."
-    npm install
+    npm ci || npm install
     echo "✔ Node.js dependencies installed."
 
     # Install Chromium browser for Puppeteer if not available
@@ -68,5 +72,5 @@ fi
 
 echo ""
 echo "=== Bootstrap Complete ==="
-echo "Run tests: ./.venv/bin/pytest"
+echo "Run tests: ./.venv/bin/python -m pytest"
 echo "Convert fixtures: ./.venv/bin/python scripts/convert_fixtures.py"

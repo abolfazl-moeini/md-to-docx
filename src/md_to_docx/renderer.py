@@ -15,6 +15,7 @@ from pygments.util import ClassNotFound
 
 from md_to_docx.template import Template
 from md_to_docx.headings import HeadingInfo
+from md_to_docx.mermaid import ConvertError
 from md_to_docx.bidi import split_bidi_runs, ScriptType, contains_persian, is_pure_latin
 from md_to_docx.oxml import (
     set_paragraph_bidi,
@@ -120,6 +121,15 @@ class DocxRenderer:
     def _line_spacing(self) -> float:
         return float(self.template.page.get("line_spacing", 1.4))
 
+    def quote_border_sz(self) -> int:
+        """OOXML border sz is eighths of a point. Prefer explicit border_sz, else border_pt."""
+        quote_cfg = self.template.quotes or {}
+        if "border_sz" in quote_cfg:
+            return int(quote_cfg["border_sz"])
+        if "border_pt" in quote_cfg:
+            return int(round(float(quote_cfg["border_pt"]) * 8))
+        return 24
+
     def _clear_paragraph(self, paragraph: Paragraph) -> None:
         for child in list(paragraph._p):
             if child.tag != qn("w:pPr"):
@@ -144,18 +154,21 @@ class DocxRenderer:
         if text == "":
             return
         resolved_color = self._resolve_color(color_hex or self.template.colors.get("body", "2D2D2D"))
-        font_family = font_name or self.template.fonts.get("body", "Vazirmatn")
+        cs_font = font_name or self.template.fonts.get("body", "Vazirmatn")
+        latin_font = font_name or self.template.fonts.get("latin", "Segoe UI")
+
         if force_ltr:
             r = paragraph.add_run(text)
             set_run_cs_font(
                 r,
-                font_name=font_family,
+                font_name=font_name or self.template.fonts.get("code", "Courier New"),
                 size_pt=font_size_pt,
                 bold=bold,
                 italic=italic,
                 color_hex=resolved_color,
                 bidi_lang=self.template.language_bidi,
                 latin_lang=self.template.language_latin,
+                cs_font_name=cs_font,
                 strike=strike,
                 superscript=superscript,
                 subscript=subscript,
@@ -164,23 +177,29 @@ class DocxRenderer:
             )
             set_run_rtl(r, False)
             return
-        for chunk, _script in split_bidi_runs(text):
+
+        for chunk, script in split_bidi_runs(text):
             r = paragraph.add_run(chunk)
+            is_latin_run = (script == ScriptType.LATIN)
+            run_font = latin_font if is_latin_run else cs_font
             set_run_cs_font(
                 r,
-                font_name=font_family,
+                font_name=run_font,
                 size_pt=font_size_pt,
                 bold=bold,
                 italic=italic,
                 color_hex=resolved_color,
                 bidi_lang=self.template.language_bidi,
                 latin_lang=self.template.language_latin,
+                cs_font_name=cs_font,
                 strike=strike,
                 superscript=superscript,
                 subscript=subscript,
                 underline=underline,
                 small_caps=small_caps,
             )
+            if is_latin_run:
+                set_run_rtl(r, False)
 
     @property
     def content_width_in(self) -> float:
@@ -213,9 +232,10 @@ class DocxRenderer:
         quote_cfg = self.template.quotes or {}
         border_color = self._resolve_color(quote_cfg.get("border_color", "primary"))
         quote_bg = self._resolve_color(quote_cfg.get("bg", "quote_bg"))
-        border_sz = int(quote_cfg.get("border_sz", 24))
+        border_sz = self.quote_border_sz()
         p = self.begin_paragraph(sample_text, align="both")
-        set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15)
+        border_side = "right" if self.template.direction == "rtl" else "left"
+        set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15, side=border_side)
         set_paragraph_shading(p, quote_bg)
         return p
 
@@ -355,6 +375,7 @@ class DocxRenderer:
         title: str,
         body_items: List[Any],
         block_renderer: Optional[Callable] = None,
+        container: Optional[Any] = None,
     ) -> Table:
         spec = self.template.callouts.get(callout_type, {})
         hdr_bg = self._resolve_color(spec.get("header_bg", "primary_dark"))
@@ -364,7 +385,8 @@ class DocxRenderer:
 
         display_title = f"{icon} {title}".strip() if icon else title
 
-        tbl = self.doc.add_table(rows=2, cols=1)
+        target = container if container is not None else self.doc
+        tbl = target.add_table(rows=2, cols=1)
         tbl.autofit = False
         is_rtl_callout = self.template.direction == "rtl" and (
             contains_persian(title) or any(contains_persian(str(b)) for b in body_items)
@@ -407,38 +429,47 @@ class DocxRenderer:
         rendered_count = 0
         for idx, item in enumerate(body_items):
             if isinstance(item, str):
-                target = p_first if rendered_count == 0 else cell_body.add_paragraph()
-                self._clear_paragraph(target)
-                self.render_paragraph(item, align="both", font_size_pt=10.5, target_p=target)
+                target_p = p_first if rendered_count == 0 else cell_body.add_paragraph()
+                self._clear_paragraph(target_p)
+                self.render_paragraph(item, align="both", font_size_pt=10.5, target_p=target_p)
                 rendered_count += 1
             elif isinstance(item, dict) and block_renderer:
+                # If first block is a Table, python-docx adds the table after p_first.
+                # Remove leading empty paragraph so the table aligns cleanly to cell top.
+                is_first_table = (rendered_count == 0 and item.get("t") == "Table" and p_first.text == "")
                 block_renderer(item, cell_body, self, is_first=(rendered_count == 0))
+                if is_first_table and p_first._p.getparent() is not None:
+                    cell_body._tc.remove(p_first._p)
                 rendered_count += 1
             else:
-                target = p_first if rendered_count == 0 else cell_body.add_paragraph()
-                self._clear_paragraph(target)
-                self.render_paragraph(str(item), align="both", font_size_pt=10.5, target_p=target)
+                target_p = p_first if rendered_count == 0 else cell_body.add_paragraph()
+                self._clear_paragraph(target_p)
+                self.render_paragraph(str(item), align="both", font_size_pt=10.5, target_p=target_p)
                 rendered_count += 1
 
         # Trailing spacing
-        spacer = self.doc.add_paragraph()
-        spacer.text = ""
-        spacer.paragraph_format.space_before = Pt(0)
-        spacer.paragraph_format.space_after = Pt(6)
+        if container is None:
+            spacer = self.doc.add_paragraph()
+            spacer.text = ""
+            spacer.paragraph_format.space_before = Pt(0)
+            spacer.paragraph_format.space_after = Pt(6)
         return tbl
 
-    def render_quote(self, paragraphs: List[str]) -> List[Paragraph]:
+    def render_quote(self, paragraphs: List[str], container: Optional[Any] = None) -> List[Paragraph]:
         quote_cfg = self.template.quotes or {}
         border_color = self._resolve_color(quote_cfg.get("border_color", "primary"))
         quote_bg = self._resolve_color(quote_cfg.get("bg", "quote_bg"))
-        border_sz = int(quote_cfg.get("border_sz", 24))
+        border_sz = self.quote_border_sz()
         rendered = []
+        target = container if container is not None else self.doc
+        border_side = "right" if self.template.direction == "rtl" else "left"
 
         for text in paragraphs:
-            p = self.doc.add_paragraph()
-            set_paragraph_bidi(p)
+            p = target.add_paragraph()
+            is_rtl = self.template.direction == "rtl" and (contains_persian(text) or not is_pure_latin(text))
+            set_paragraph_bidi(p, bidi=is_rtl)
             set_paragraph_align(p, "both")
-            set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15)
+            set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15, side=border_side)
             set_paragraph_shading(p, quote_bg)
             self.render_paragraph(text, align="both", font_size_pt=10.5, target_p=p)
             rendered.append(p)
@@ -480,9 +511,10 @@ class DocxRenderer:
                 p_def.paragraph_format.space_after = Pt(4)
                 self.append_text(p_def, dtext, font_size_pt=10.5)
 
-    def render_horizontal_rule(self) -> Paragraph:
+    def render_horizontal_rule(self, container: Optional[Any] = None) -> Paragraph:
         """Renders a subtle horizontal dividing rule."""
-        p = self.doc.add_paragraph()
+        target = container if container is not None else self.doc
+        p = target.add_paragraph()
         p.paragraph_format.space_before = Pt(8)
         p.paragraph_format.space_after = Pt(8)
         border_color = self._resolve_color("caption")
@@ -624,7 +656,13 @@ class DocxRenderer:
             spacer.paragraph_format.space_after = Pt(6)
         return tbl
 
-    def render_image(self, image_path: Path, caption: Optional[str] = None) -> Tuple[Paragraph, Optional[Paragraph]]:
+    def render_image(
+        self,
+        image_path: str | Path,
+        caption: Optional[str] = None,
+        alt_text: Optional[str] = None,
+        container: Optional[Any] = None,
+    ) -> Tuple[Paragraph, Optional[Paragraph]]:
         resolved_path = Path(image_path)
         if not resolved_path.is_absolute():
             if self.base_dir and (self.base_dir / resolved_path).exists():
@@ -632,16 +670,26 @@ class DocxRenderer:
             elif not resolved_path.exists() and self.base_dir:
                 resolved_path = self.base_dir / resolved_path
 
-        p_img = self.doc.add_paragraph()
-        set_paragraph_align(p_img, "center")
-        p_img.paragraph_format.space_before = Pt(6)
-        p_img.paragraph_format.space_after = Pt(4)
+        # R-03: Validate existence, regular file, non-empty, and format
+        if not resolved_path.exists():
+            raise ConvertError(f"Image not found: '{resolved_path}'")
+        if not resolved_path.is_file():
+            raise ConvertError(f"Image path is not a regular file: '{resolved_path}'")
+        if resolved_path.stat().st_size == 0:
+            raise ConvertError(f"Image file is empty (0 bytes): '{resolved_path}'")
 
         try:
             with Image.open(resolved_path) as img:
                 px_w, px_h = img.size
-        except Exception:
-            px_w, px_h = (600, 300)
+                img.load()
+        except Exception as e:
+            raise ConvertError(f"Invalid or corrupted image file '{resolved_path}': {e}") from e
+
+        target = container if container is not None else self.doc
+        p_img = target.add_paragraph()
+        set_paragraph_align(p_img, "center")
+        p_img.paragraph_format.space_before = Pt(6)
+        p_img.paragraph_format.space_after = Pt(4)
 
         max_w = float(self.template.mermaid.get("max_width_in", 6.3))
         disp_w = min(max_w, self.content_width_in)
@@ -651,17 +699,24 @@ class DocxRenderer:
         r_img = p_img.add_run()
         try:
             r_img.add_picture(str(resolved_path), width=Inches(disp_w), height=Inches(disp_h))
-        except Exception:
-            import io
-            buf = io.BytesIO()
-            with Image.open(resolved_path) as img:
-                img.save(buf, format="PNG")
-            buf.seek(0)
-            r_img.add_picture(buf, width=Inches(disp_w), height=Inches(disp_h))
+        except Exception as embed_err:
+            self._clear_paragraph(p_img)
+            try:
+                import io
+                buf = io.BytesIO()
+                with Image.open(resolved_path) as img:
+                    img.convert("RGBA").save(buf, format="PNG")
+                buf.seek(0)
+                r_fallback = p_img.add_run()
+                r_fallback.add_picture(buf, width=Inches(disp_w), height=Inches(disp_h))
+            except Exception as fallback_err:
+                raise ConvertError(
+                    f"Failed to embed image '{resolved_path}': {embed_err} (fallback failed: {fallback_err})"
+                ) from fallback_err
 
         p_cap = None
         if caption:
-            p_cap = self.doc.add_paragraph()
+            p_cap = target.add_paragraph()
             is_rtl_cap = contains_persian(caption) if self.template.direction == "rtl" else False
             set_paragraph_bidi(p_cap, bidi=is_rtl_cap)
             set_paragraph_align(p_cap, "center")
@@ -682,13 +737,88 @@ class DocxRenderer:
                     latin_lang=self.template.language_latin,
                 )
 
+        if alt_text:
+            for docPr in p_img._p.xpath(".//wp:docPr"):
+                docPr.set("descr", alt_text)
+                if not docPr.get("title"):
+                    docPr.set("title", alt_text)
+
         return (p_img, p_cap)
+
+    def render_inline_image(
+        self,
+        image_path: str | Path,
+        paragraph: Paragraph,
+        alt_text: Optional[str] = None,
+        title: Optional[str] = None,
+        max_height_in: float = 1.5,
+    ) -> Any:
+        """
+        Embeds an inline image directly within a run of the given paragraph,
+        preserving the exact sequential inline order of the Markdown document (R3-02).
+        Sets docPr descr for accessibility.
+        """
+        resolved_path = Path(image_path)
+        if not resolved_path.is_absolute():
+            if self.base_dir and (self.base_dir / resolved_path).exists():
+                resolved_path = self.base_dir / resolved_path
+            elif not resolved_path.exists() and self.base_dir:
+                resolved_path = self.base_dir / resolved_path
+
+        if not resolved_path.exists():
+            raise ConvertError(f"Image not found: '{resolved_path}'")
+        if not resolved_path.is_file():
+            raise ConvertError(f"Image path is not a regular file: '{resolved_path}'")
+        if resolved_path.stat().st_size == 0:
+            raise ConvertError(f"Image file is empty (0 bytes): '{resolved_path}'")
+
+        try:
+            with Image.open(resolved_path) as img:
+                px_w, px_h = img.size
+                img.load()
+        except Exception as e:
+            raise ConvertError(f"Invalid or corrupted image file '{resolved_path}': {e}") from e
+
+        aspect = px_w / max(1, px_h)
+        target_h_in = min(px_h / 96.0, max_height_in)
+        target_w_in = target_h_in * aspect
+        if target_w_in > self.content_width_in:
+            target_w_in = self.content_width_in
+            target_h_in = target_w_in / max(0.01, aspect)
+
+        r_img = paragraph.add_run()
+        try:
+            r_img.add_picture(str(resolved_path), width=Inches(target_w_in), height=Inches(target_h_in))
+        except Exception as embed_err:
+            try:
+                import io
+                buf = io.BytesIO()
+                with Image.open(resolved_path) as img:
+                    img.convert("RGBA").save(buf, format="PNG")
+                buf.seek(0)
+                r_img.add_picture(buf, width=Inches(target_w_in), height=Inches(target_h_in))
+            except Exception as fallback_err:
+                raise ConvertError(
+                    f"Failed to embed inline image '{resolved_path}': {embed_err} (fallback failed: {fallback_err})"
+                ) from fallback_err
+
+        if alt_text or title:
+            for docPr in r_img._r.xpath(".//wp:docPr"):
+                if alt_text:
+                    docPr.set("descr", alt_text)
+                if title:
+                    docPr.set("title", title)
+                elif alt_text and not docPr.get("title"):
+                    docPr.set("title", alt_text)
+
+        return r_img
 
     def render_code_block(
         self,
         code_str: str,
         language: Optional[str] = None,
         theme: Optional[str] = None,
+        container: Optional[Any] = None,
     ) -> Table:
         """
         Renders a syntax-highlighted monospaced code block within a distinct shaded box.
@@ -715,18 +845,23 @@ class DocxRenderer:
         lexer = None
         if language:
             clean_lang = language.strip().lower()
-            try:
-                lexer = get_lexer_by_name(clean_lang)
-            except ClassNotFound:
-                pass
-        if lexer is None:
-            try:
-                lexer = guess_lexer(code_str)
-            except Exception:
-                lexer = TextLexer()
+            if clean_lang in ("auto", "guess"):
+                try:
+                    lexer = guess_lexer(code_str)
+                except Exception:
+                    lexer = TextLexer()
+            else:
+                try:
+                    lexer = get_lexer_by_name(clean_lang)
+                except ClassNotFound:
+                    # Unknown language: deterministic fallback to TextLexer (R3-04)
+                    lexer = TextLexer()
+        else:
+            lexer = TextLexer()
 
         # Create 1x1 table for styled code block box
-        tbl = self.doc.add_table(rows=1, cols=1)
+        target = container if container is not None else self.doc
+        tbl = target.add_table(rows=1, cols=1)
         tbl.autofit = False
         tblPr = tbl._tbl.tblPr
 
@@ -826,9 +961,10 @@ class DocxRenderer:
                 set_run_rtl(r, False)
 
         # Spacing after code block
-        spacer = self.doc.add_paragraph()
-        spacer.text = ""
-        spacer.paragraph_format.space_before = Pt(0)
-        spacer.paragraph_format.space_after = Pt(6)
+        if container is None:
+            spacer = self.doc.add_paragraph()
+            spacer.text = ""
+            spacer.paragraph_format.space_before = Pt(0)
+            spacer.paragraph_format.space_after = Pt(6)
 
         return tbl

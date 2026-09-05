@@ -1,3 +1,4 @@
+import os
 import pytest
 from pathlib import Path
 from click.testing import CliRunner
@@ -117,5 +118,82 @@ def test_cli_convert_output_is_directory_fails(runner, tmp_path):
     result = runner.invoke(main, ["convert", str(in_file), "-o", str(out_dir)])
     assert result.exit_code == 2
     assert "is a directory" in result.output
+
+
+def test_cli_convert_broken_symlink_fails(runner, tmp_path):
+    target = tmp_path / "nonexistent.md"
+    link = tmp_path / "broken_link.md"
+    link.symlink_to(target)
+
+    result = runner.invoke(main, ["convert", str(link)])
+    assert result.exit_code == 2
+    assert "broken symlink" in result.output.lower() or "does not exist" in result.output.lower()
+
+
+def test_cli_convert_unreadable_input_fails(runner, tmp_path):
+    in_file = tmp_path / "unreadable.md"
+    in_file.write_text("# Secret", encoding="utf-8")
+    original_mode = in_file.stat().st_mode
+    try:
+        in_file.chmod(0o000)
+        result = runner.invoke(main, ["convert", str(in_file)])
+        # In case running as root or environment allows read, check
+        if not os.access(in_file, os.R_OK):
+            assert result.exit_code == 1
+            assert "permission error" in result.output.lower() or "not readable" in result.output.lower()
+    finally:
+        in_file.chmod(original_mode)
+
+
+def test_cli_convert_unwritable_parent_dir_fails(runner, tmp_path):
+    in_file = tmp_path / "in.md"
+    in_file.write_text("# Test", encoding="utf-8")
+
+    parent_dir = tmp_path / "readonly_dir"
+    parent_dir.mkdir()
+    out_file = parent_dir / "out.docx"
+
+    original_mode = parent_dir.stat().st_mode
+    try:
+        parent_dir.chmod(0o555)
+        if not os.access(parent_dir, os.W_OK):
+            result = runner.invoke(main, ["convert", str(in_file), "-o", str(out_file)])
+            assert result.exit_code == 1
+            assert "permission error" in result.output.lower() or "not writable" in result.output.lower()
+    finally:
+        parent_dir.chmod(original_mode)
+
+
+def test_cli_convert_unwritable_existing_output_fails(runner, tmp_path):
+    in_file = tmp_path / "in.md"
+    in_file.write_text("# Test", encoding="utf-8")
+
+    out_file = tmp_path / "readonly.docx"
+    out_file.write_text("existing", encoding="utf-8")
+
+    original_mode = out_file.stat().st_mode
+    try:
+        out_file.chmod(0o444)
+        if not os.access(out_file, os.W_OK):
+            result = runner.invoke(main, ["convert", str(in_file), "-o", str(out_file), "--overwrite"])
+            assert result.exit_code == 1
+            assert "permission error" in result.output.lower() or "not writable" in result.output.lower()
+    finally:
+        out_file.chmod(original_mode)
+
+
+def test_cli_convert_unexpected_error_shows_traceback(runner, tmp_path, mocker):
+    in_file = tmp_path / "in.md"
+    in_file.write_text("# Test", encoding="utf-8")
+    out_file = tmp_path / "out.docx"
+
+    mocker.patch("md_to_docx.cli.convert_markdown_to_docx", side_effect=RuntimeError("Hardware fault"))
+
+    result = runner.invoke(main, ["convert", str(in_file), "-o", str(out_file)])
+    assert result.exit_code == 1
+    assert "Unexpected Error" in result.output
+    assert "Hardware fault" in result.output
+    assert "Traceback" in result.output
+
 
 

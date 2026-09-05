@@ -48,14 +48,16 @@ def test_diverse_fixtures_exist():
 
 @pytest.mark.pandoc
 @pytest.mark.mermaid
+@pytest.mark.integration
 def test_convert_all_fixtures_and_retain_on_disk(tmp_path):
     """Converts all diverse fixtures to DOCX using default template in tmp_path to avoid modifying tracked files."""
     import shutil
-    from md_to_docx.mermaid import _find_browser_executable
+    from md_to_docx.mermaid import probe_mermaid_renderer
     if not shutil.which("pandoc"):
         pytest.skip("pandoc is not installed")
-    if not _find_browser_executable():
-        pytest.skip("Chromium/Chrome is not available in this environment")
+    can_render, reason = probe_mermaid_renderer()
+    if not can_render:
+        pytest.skip(f"Mermaid renderer not operational: {reason}")
 
     # Copy shared image assets
     for img in ["1.jpg", "2.jpg", "diagram-stub.png"]:

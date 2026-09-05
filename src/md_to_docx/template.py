@@ -90,7 +90,7 @@ class Template:
     def _validate(self) -> None:
         if self.raw_config.get("schema_version") != 1:
             raise TemplateValidationError(
-                "Template config missing required field: 'schema_version' (expected 1)"
+                "Template config missing or invalid required field: 'schema_version' (expected 1)"
             )
         for section in REQUIRED_SECTIONS:
             if section not in self.raw_config:
@@ -99,30 +99,39 @@ class Template:
         direction = self.raw_config.get("direction")
         if direction not in ("rtl", "ltr"):
             raise TemplateValidationError(
-                f"Template config 'direction' must be 'rtl' or 'ltr', got '{direction}'"
+                f"Field 'direction' must be 'rtl' or 'ltr', got '{direction}'"
             )
 
         fonts = self.raw_config.get("fonts", {})
         if not isinstance(fonts, dict):
-            raise TemplateValidationError("Template config 'fonts' must be a mapping")
+            raise TemplateValidationError("Field 'fonts' must be a mapping")
         for font_key in REQUIRED_FONTS:
             if font_key not in fonts or not fonts[font_key] or not isinstance(fonts[font_key], str):
-                raise TemplateValidationError(f"Template config missing required font: 'fonts.{font_key}'")
+                raise TemplateValidationError(f"Field 'fonts.{font_key}' is required and must be a non-empty string")
+
+        font_files = self.raw_config.get("font_files")
+        if font_files is not None:
+            if not isinstance(font_files, dict):
+                raise TemplateValidationError("Field 'font_files' must be a mapping")
+            for fname, fpath in font_files.items():
+                self._resolve_path(fpath, field_name=f"font_files.{fname}")
 
         colors = self.raw_config.get("colors", {})
         if not isinstance(colors, dict):
-            raise TemplateValidationError("Template config 'colors' must be a mapping")
+            raise TemplateValidationError("Field 'colors' must be a mapping")
         for col_key in REQUIRED_COLORS:
             if col_key not in colors or not colors[col_key]:
-                raise TemplateValidationError(f"Template config missing required color: 'colors.{col_key}'")
+                raise TemplateValidationError(f"Field 'colors.{col_key}' is required and must not be empty")
             col_val = str(colors[col_key])
             if not HEX_COLOR_RE.match(col_val):
                 raise TemplateValidationError(
-                    f"Template config color 'colors.{col_key}' must be a valid hex color, got '{col_val}'"
+                    f"Field 'colors.{col_key}' must be a valid hex color, got '{col_val}'"
                 )
 
         page = self.raw_config.get("page")
-        if page is not None and isinstance(page, dict):
+        if page is not None:
+            if not isinstance(page, dict):
+                raise TemplateValidationError("Field 'page' must be a mapping")
             margin_cm = page.get("margin_cm")
             if margin_cm is not None:
                 if not isinstance(margin_cm, dict):
@@ -134,9 +143,22 @@ class Template:
                             raise TemplateValidationError(
                                 f"Field 'page.margin_cm.{side}' must be a positive number, got '{val}'"
                             )
+            for num_field in ("font_size_pt", "line_spacing"):
+                if num_field in page:
+                    val = page[num_field]
+                    if not isinstance(val, (int, float)) or val <= 0:
+                        raise TemplateValidationError(
+                            f"Field 'page.{num_field}' must be a positive number, got '{val}'"
+                        )
 
         headings = self.raw_config.get("headings")
-        if headings is not None and isinstance(headings, dict):
+        if headings is not None:
+            if not isinstance(headings, dict):
+                raise TemplateValidationError("Field 'headings' must be a mapping")
+            if "badge" in headings and not isinstance(headings["badge"], bool):
+                raise TemplateValidationError("Field 'headings.badge' must be a boolean")
+            if "extract_number" in headings and not isinstance(headings["extract_number"], bool):
+                raise TemplateValidationError("Field 'headings.extract_number' must be a boolean")
             for h in ("h1", "h2", "h3"):
                 if h in headings and isinstance(headings[h], dict):
                     if "size_pt" in headings[h]:
@@ -145,15 +167,112 @@ class Template:
                             raise TemplateValidationError(
                                 f"Field 'headings.{h}.size_pt' must be a positive number, got '{sz}'"
                             )
+                    for col_field in ("badge_bg", "badge_fg"):
+                        if col_field in headings[h]:
+                            cval = str(headings[h][col_field])
+                            if not (HEX_COLOR_RE.match(cval) or cval in colors):
+                                raise TemplateValidationError(
+                                    f"Field 'headings.{h}.{col_field}' must be a valid hex color or palette reference, got '{cval}'"
+                                )
+
+        callouts = self.raw_config.get("callouts")
+        if callouts is not None:
+            if not isinstance(callouts, dict):
+                raise TemplateValidationError("Field 'callouts' must be a mapping")
+            for cname, cspec in callouts.items():
+                if not isinstance(cspec, dict):
+                    raise TemplateValidationError(f"Field 'callouts.{cname}' must be a mapping")
+                if "classes" in cspec and not isinstance(cspec["classes"], list):
+                    raise TemplateValidationError(f"Field 'callouts.{cname}.classes' must be a list")
+                for cfield in ("header_bg", "header_fg", "body_bg"):
+                    if cfield in cspec:
+                        cval = str(cspec[cfield])
+                        if not (HEX_COLOR_RE.match(cval) or cval in colors):
+                            raise TemplateValidationError(
+                                f"Field 'callouts.{cname}.{cfield}' must be a valid hex color or palette reference, got '{cval}'"
+                            )
+
+        quotes = self.raw_config.get("quotes")
+        if quotes is not None:
+            if not isinstance(quotes, dict):
+                raise TemplateValidationError("Field 'quotes' must be a mapping")
+            if "border_pt" in quotes:
+                val = quotes["border_pt"]
+                if not isinstance(val, (int, float)) or val <= 0:
+                    raise TemplateValidationError(f"Field 'quotes.border_pt' must be a positive number, got '{val}'")
+            if "border_side" in quotes:
+                bs = quotes["border_side"]
+                valid_sides = ("physical_right", "physical_left", "start", "end", "left", "right")
+                if bs not in valid_sides:
+                    raise TemplateValidationError(
+                        f"Field 'quotes.border_side' must be one of {valid_sides}, got '{bs}'"
+                    )
+            for qfield in ("border_color", "bg"):
+                if qfield in quotes:
+                    qval = str(quotes[qfield])
+                    if not (HEX_COLOR_RE.match(qval) or qval in colors):
+                        raise TemplateValidationError(
+                            f"Field 'quotes.{qfield}' must be a valid hex color or palette reference, got '{qval}'"
+                        )
+
+        tables = self.raw_config.get("tables")
+        if tables is not None:
+            if not isinstance(tables, dict):
+                raise TemplateValidationError("Field 'tables' must be a mapping")
+            if "bidi_visual" in tables and not isinstance(tables["bidi_visual"], bool):
+                raise TemplateValidationError("Field 'tables.bidi_visual' must be a boolean")
+            for tfield in ("header_bg", "header_fg"):
+                if tfield in tables:
+                    tval = str(tables[tfield])
+                    if not (HEX_COLOR_RE.match(tval) or tval in colors):
+                        raise TemplateValidationError(
+                            f"Field 'tables.{tfield}' must be a valid hex color or palette reference, got '{tval}'"
+                        )
+
+        code_block = self.raw_config.get("code_block")
+        if code_block is not None:
+            if not isinstance(code_block, dict):
+                raise TemplateValidationError("Field 'code_block' must be a mapping")
+            for cb_num in ("font_size_pt", "line_spacing"):
+                if cb_num in code_block:
+                    val = code_block[cb_num]
+                    if not isinstance(val, (int, float)) or val <= 0:
+                        raise TemplateValidationError(f"Field 'code_block.{cb_num}' must be a positive number, got '{val}'")
+            if "border_sz" in code_block:
+                val = code_block["border_sz"]
+                if not isinstance(val, (int, float)) or val < 0:
+                    raise TemplateValidationError(f"Field 'code_block.border_sz' must be non-negative, got '{val}'")
+            for cb_col in ("bg", "border_color", "color"):
+                if cb_col in code_block:
+                    cval = str(code_block[cb_col])
+                    if not (HEX_COLOR_RE.match(cval) or cval in colors):
+                        raise TemplateValidationError(
+                            f"Field 'code_block.{cb_col}' must be a valid hex color or palette reference, got '{cval}'"
+                        )
 
         mermaid = self.raw_config.get("mermaid")
-        if mermaid is not None and isinstance(mermaid, dict):
+        if mermaid is not None:
+            if not isinstance(mermaid, dict):
+                raise TemplateValidationError("Field 'mermaid' must be a mapping")
             if "scale" in mermaid:
                 sc = mermaid["scale"]
                 if not isinstance(sc, (int, float)) or sc <= 0:
-                    raise TemplateValidationError(
-                        f"Field 'mermaid.scale' must be a positive number, got '{sc}'"
-                    )
+                    raise TemplateValidationError(f"Field 'mermaid.scale' must be a positive number, got '{sc}'")
+            if "max_width_in" in mermaid:
+                mw = mermaid["max_width_in"]
+                if not isinstance(mw, (int, float)) or mw <= 0:
+                    raise TemplateValidationError(f"Field 'mermaid.max_width_in' must be a positive number, got '{mw}'")
+            for ref_file, field in (
+                ("theme_file", "mermaid.theme_file"),
+                ("css_file", "mermaid.css_file"),
+                ("puppeteer_config", "mermaid.puppeteer_config"),
+            ):
+                if ref_file in mermaid and mermaid[ref_file]:
+                    self._resolve_path(mermaid[ref_file], field_name=field)
+
+        custom_shell = self.raw_config.get("shell")
+        if custom_shell:
+            self._resolve_path(custom_shell, field_name="shell")
 
     @classmethod
     def find_template_dir(cls, name_or_path: str | Path) -> Path:

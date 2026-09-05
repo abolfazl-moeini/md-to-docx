@@ -1,6 +1,7 @@
 import pytest
 from pathlib import Path
 from docx import Document
+from docx.oxml.ns import qn
 from md_to_docx.template import Template
 from md_to_docx.headings import HeadingInfo
 from md_to_docx.renderer import DocxRenderer
@@ -105,6 +106,8 @@ def test_render_quote(renderer):
     assert '<w:right w:val="single"' in xml
     assert 'w:color="6B2FA0"' in xml
     assert 'w:fill="ECE4F1"' in xml
+    # purple_book quotes.border_pt is 12 → OOXML sz is eighths of a point
+    assert 'w:sz="96"' in xml
 
 def test_render_table(renderer):
     headers = ["مفهوم", "سطح معمول", "نمونه"]
@@ -130,6 +133,46 @@ def test_render_image_with_caption(renderer, tmp_path):
     assert "شکل ۲-۱. معماری داخلی" in cap_xml
     assert 'w:jc w:val="center"' in cap_xml
     assert 'w:color w:val="5A5A5A"' in cap_xml
+
+
+def test_render_image_missing_raises_converterror(renderer, tmp_path):
+    from md_to_docx.mermaid import ConvertError
+    missing = tmp_path / "does-not-exist.png"
+    with pytest.raises(ConvertError) as exc_info:
+        renderer.render_image(missing)
+    assert "not found" in str(exc_info.value).lower()
+    assert str(missing) in str(exc_info.value)
+
+
+def test_render_image_empty_file_raises_converterror(renderer, tmp_path):
+    from md_to_docx.mermaid import ConvertError
+    empty = tmp_path / "empty.png"
+    empty.write_bytes(b"")
+    with pytest.raises(ConvertError) as exc_info:
+        renderer.render_image(empty)
+    assert "empty" in str(exc_info.value).lower() or "0 bytes" in str(exc_info.value)
+
+
+def test_render_image_invalid_format_raises_converterror(renderer, tmp_path):
+    from md_to_docx.mermaid import ConvertError
+    bogus = tmp_path / "corrupt.png"
+    bogus.write_bytes(b"this is not an image file")
+    with pytest.raises(ConvertError) as exc_info:
+        renderer.render_image(bogus)
+    assert "invalid" in str(exc_info.value).lower() or "corrupted" in str(exc_info.value).lower()
+    assert str(bogus) in str(exc_info.value)
+
+
+def test_render_image_unicode_path(renderer, tmp_path):
+    stub_img = Path(__file__).parent / "fixtures" / "diagram-stub.png"
+    unicode_dir = tmp_path / "تصاویر نمونه"
+    unicode_dir.mkdir()
+    dest = unicode_dir / "نمودار_۱.png"
+    dest.write_bytes(stub_img.read_bytes())
+    p_img, p_cap = renderer.render_image(dest, caption="شکل ۱. مسیر یونیکد")
+    assert p_img is not None
+    assert p_cap is not None
+    assert "شکل ۱. مسیر یونیکد" in p_cap.text
 
 
 def test_render_code_block_box_styling(renderer):
@@ -230,6 +273,80 @@ def test_render_code_block_edge_cases(renderer):
     tbl_persian = renderer.render_code_block(code_persian, language="sql")
     assert "کامنت فارسی" in tbl_persian.cell(0, 0).text
     assert 'w:cs="Vazirmatn"' in tbl_persian._tbl.xml
+
+
+def test_code_block_syntax_highlighting_end_to_end(tmp_path):
+    """R3-04: Verifies syntax highlighting from Markdown to DOCX for Python, SQL, TypeScript, JSON."""
+    from md_to_docx.pipeline import convert_markdown_to_docx
+    md_content = """# Test Code Blocks
+
+```python
+def calculate_tax(amount: float) -> float:
+    return amount * 0.09
+```
+
+```sql
+SELECT id, username FROM users WHERE is_active = 1;
+```
+
+```typescript
+interface ServiceConfig {
+    timeoutMs: number;
+}
+```
+
+```json
+{"name": "app", "version": 1}
+```
+
+```unsupported_fake_lang
+some raw text line 1
+```
+"""
+    in_file = tmp_path / "code_test.md"
+    in_file.write_text(md_content, encoding="utf-8")
+    out_file = tmp_path / "code_test.docx"
+
+    convert_markdown_to_docx(in_file, out_file)
+    assert out_file.exists()
+
+    doc = Document(str(out_file))
+    code_tables = [t for t in doc.tables if len(t.rows) == 1 and len(t.columns) == 1]
+    assert len(code_tables) >= 5
+    for tbl in code_tables[:5]:
+        tbl_xml = tbl._tbl.xml
+        assert "w:bidiVisual" not in tbl_xml
+        assert 'w:ascii="Courier New"' in tbl_xml
+        assert 'w:fill="F6F8FA"' in tbl_xml
+
+    def get_token_colors(tbl):
+        colors = set()
+        for p in tbl.cell(0, 0).paragraphs:
+            for r in p.runs:
+                rPr = r._r.find(qn("w:rPr"))
+                if rPr is not None:
+                    c_elem = rPr.find(qn("w:color"))
+                    if c_elem is not None and c_elem.get(qn("w:val")):
+                        colors.add(c_elem.get(qn("w:val")))
+        return colors
+
+    py_colors = get_token_colors(code_tables[0])
+    assert len(py_colors) >= 2, f"Python code must have at least 2 distinct token colors, got {py_colors}"
+    assert "007020" in py_colors  # Keyword color
+
+    sql_colors = get_token_colors(code_tables[1])
+    assert len(sql_colors) >= 2, f"SQL code must have at least 2 distinct token colors, got {sql_colors}"
+    assert "007020" in sql_colors  # Keyword color for SELECT/WHERE
+
+    ts_colors = get_token_colors(code_tables[2])
+    assert len(ts_colors) >= 2, f"TypeScript code must have at least 2 distinct token colors, got {ts_colors}"
+
+    json_colors = get_token_colors(code_tables[3])
+    assert len(json_colors) >= 2, f"JSON code must have at least 2 distinct token colors, got {json_colors}"
+
+    fallback_colors = get_token_colors(code_tables[4])
+    assert len(fallback_colors) == 1, f"Fallback code block should use uniform text color, got {fallback_colors}"
+    assert "some raw text line 1" in code_tables[4].cell(0, 0).text
 
 
 def test_shell_docx_cleaning_preserves_sectpr_header_footer_and_removes_placeholders(tmp_path):

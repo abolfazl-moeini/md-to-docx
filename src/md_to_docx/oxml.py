@@ -299,21 +299,29 @@ def set_paragraph_quote_border(
     color_hex: str = "6B2FA0",
     sz: int = 24,
     space: int = 15,
+    side: str = "right",
 ) -> None:
-    """Sets thick physical right border on a paragraph for blockquote callout."""
+    """Sets thick physical border on a paragraph for blockquote callout (right for RTL, left for LTR)."""
     pPr = paragraph._p.get_or_add_pPr()
     pBdr = pPr.find(qn("w:pBdr"))
     if pBdr is None:
         pBdr = OxmlElement("w:pBdr")
         pPr.append(pBdr)
-    right = pBdr.find(qn("w:right"))
-    if right is None:
-        right = OxmlElement("w:right")
-        pBdr.append(right)
-    right.set(qn("w:val"), "single")
-    right.set(qn("w:sz"), str(sz))
-    right.set(qn("w:space"), str(space))
-    right.set(qn("w:color"), color_hex.lstrip("#"))
+
+    other_tag = "w:left" if side == "right" else "w:right"
+    existing_other = pBdr.find(qn(other_tag))
+    if existing_other is not None:
+        pBdr.remove(existing_other)
+
+    side_tag = f"w:{side}"
+    border_el = pBdr.find(qn(side_tag))
+    if border_el is None:
+        border_el = OxmlElement(side_tag)
+        pBdr.append(border_el)
+    border_el.set(qn("w:val"), "single")
+    border_el.set(qn("w:sz"), str(sz))
+    border_el.set(qn("w:space"), str(space))
+    border_el.set(qn("w:color"), color_hex.lstrip("#"))
 
 
 def set_doc_bidi(doc: Document) -> None:

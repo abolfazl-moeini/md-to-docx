@@ -20,6 +20,11 @@ from md_to_docx.pipeline import convert_markdown_to_docx
 from md_to_docx.mermaid import ConvertError
 
 
+import logging
+import os
+import traceback
+
+
 @click.group()
 def main():
     """md-to-docx: Convert Persian / RTL Markdown + Mermaid to beautiful DOCX."""
@@ -27,13 +32,18 @@ def main():
 
 
 @main.command()
-@click.argument("input_path", type=click.Path(exists=False, dir_okay=True))
+@click.argument("input_path", type=click.Path(exists=False, dir_okay=True, readable=False))
 @click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False), help="Output DOCX path.")
 @click.option("-t", "--template", "template_name", default="purple_book", help="Template name or directory path.")
 @click.option("-f", "--overwrite", is_flag=True, default=False, help="Overwrite existing output file.")
 def convert(input_path: str, output_path: str | None, template_name: str, overwrite: bool):
     """Converts a Markdown file into a styled DOCX document."""
-    in_file = Path(input_path).resolve()
+    raw_in = Path(input_path)
+    if raw_in.is_symlink() and not raw_in.exists():
+        click.echo(f"Error: Input file '{input_path}' does not exist (broken symlink).", err=True)
+        sys.exit(2)
+
+    in_file = raw_in.resolve()
 
     if not in_file.exists():
         click.echo(f"Error: Input file '{input_path}' does not exist.", err=True)
@@ -42,6 +52,10 @@ def convert(input_path: str, output_path: str | None, template_name: str, overwr
     if not in_file.is_file():
         click.echo(f"Error: Input path '{input_path}' is a directory, not a regular file.", err=True)
         sys.exit(2)
+
+    if not os.access(in_file, os.R_OK):
+        click.echo(f"Permission Error: Input file '{in_file}' is not readable.", err=True)
+        sys.exit(1)
 
     if not output_path:
         out_file = in_file.with_suffix(".docx")
@@ -56,12 +70,20 @@ def convert(input_path: str, output_path: str | None, template_name: str, overwr
         click.echo(f"Error: Output path '{out_file}' is a directory, not a regular file.", err=True)
         sys.exit(2)
 
-    if out_file.exists() and not overwrite:
-        click.echo(
-            f"Error: Output file '{out_file}' already exists. Use --overwrite (-f) to overwrite.",
-            err=True,
-        )
-        sys.exit(2)
+    if out_file.parent.exists() and not os.access(out_file.parent, os.W_OK):
+        click.echo(f"Permission Error: Output directory '{out_file.parent}' is not writable.", err=True)
+        sys.exit(1)
+
+    if out_file.exists():
+        if not overwrite:
+            click.echo(
+                f"Error: Output file '{out_file}' already exists. Use --overwrite (-f) to overwrite.",
+                err=True,
+            )
+            sys.exit(2)
+        if not os.access(out_file, os.W_OK):
+            click.echo(f"Permission Error: Output file '{out_file}' is not writable.", err=True)
+            sys.exit(1)
 
     try:
         tmpl = Template.load(template_name)
@@ -86,7 +108,8 @@ def convert(input_path: str, output_path: str | None, template_name: str, overwr
         click.echo(f"Conversion Error: {e}", err=True)
         sys.exit(1)
     except Exception as e:
-        click.echo(f"Unexpected Error: {e}", err=True)
+        logging.getLogger(__name__).exception("Unexpected error in CLI conversion: %s", e)
+        click.echo(f"Unexpected Error: {e}\n{traceback.format_exc()}", err=True)
         sys.exit(1)
 
 

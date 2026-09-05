@@ -61,8 +61,8 @@ brew install pandoc
 
 python3.11 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
-npm install
+pip install -c constraints.txt -e ".[dev]"
+npm ci || npm install
 
 # Install Chromium for Puppeteer if needed
 npx puppeteer browsers install chrome
@@ -214,21 +214,43 @@ Markdown
 
 Pandoc is **not** used as the DOCX writer. A Chinese reference `.docx` will not give you Persian RTL.
 
-## Development
+## Development & Testing
+
+> [!NOTE]
+> System `pytest` on PATH may reference an incompatible Python interpreter. Always execute tests through the virtual environment's interpreter using `python -m pytest`:
 
 ```bash
+# Setup environment & dependencies
+./scripts/bootstrap.sh
+
+# Run unit tests
 source .venv/bin/activate
-pytest
+python -m pytest tests -q -m "not (mermaid or integration)"
+
+# Run full test suite with skip details visible
+python -m pytest tests -v -rs
 ```
 
-Unit tests mock Pandoc and mermaid-cli. Converting the large fixtures needs both binaries on `PATH`.
+Unit tests isolate components using mocks. Integration tests automatically probe for `pandoc` and `mmdc` (plus headless Chromium) and will run or skip based on environment availability.
 
 ```
-src/md_to_docx/     CLI, pipeline, renderer, oxml helpers
-templates/          visual themes
-tests/              pytest + golden Markdown fixtures
-sample-template/    target screenshots
+src/md_to_docx/     CLI, pipeline, renderer, oxml helpers, bidi
+templates/          visual themes (purple_book, fonts, CSS)
+tests/              pytest test suite + golden Markdown fixtures
+tests/fixtures/     Persian, English, and comprehensive Markdown fixtures
 ```
+
+## Operational Limits & Specifications
+
+- **Pandoc AST API Version Lock**: Explicitly locked to Pandoc API versions 1.22.x through 1.23.x (Pandoc 2.11 through 3.x). Mismatched AST versions raise an explicit `ConvertError`.
+- **Raw HTML & Comments Policy**: HTML comments (`<!-- ... -->`) are suppressed from the rendered document unless they specify page breaks (`<!-- pagebreak -->`). Line breaks (`<br/>`) emit Word line breaks. Unrecognized dangerous HTML blocks (`<script>`, `<iframe>`) are rejected with `ConvertError`.
+- **Image Alt Text vs. Captions**: Alt text in `![Alt text](image.png)` is embedded as accessibility metadata (`wp:docPr` `descr`), preventing accidental duplicate visible captions. Visible captions are rendered beneath figures only when an explicit title attribute (`"Title"`) or `Figure` caption block is provided.
+- **Code Highlighting & Unknown Language Fallback**: Pygments styles code blocks with distinct token colors for Python, SQL, TypeScript, JSON, etc. Unknown language tags deterministically fall back to `TextLexer` using the configured monospace font and neutral color without guessing.
+- **Transactional Staging & Atomic Rollback**: Conversions stage all output files in an isolated temporary directory. If any failure occurs during diagram compilation, Pandoc parsing, AST rendering, or file publishing, the target DOCX and media directories are cleanly rolled back to their prior state, and staging files are purged.
+- **Maximum Input File Size**: 20 MB (`MAX_INPUT_SIZE_BYTES = 20 * 1024 * 1024`). Files exceeding this limit fail immediately with `ConvertError` to prevent memory exhaustion.
+- **Mermaid Compilation Timeout**: 60.0 seconds per diagram (`MERMAID_TIMEOUT_SECONDS = 60.0`).
+- **Mermaid Browser Renderer**: Prefers Puppeteer-managed Chrome for Testing over system Chrome.app, passing explicit `executablePath` and `--no-sandbox` flags.
+- **Table Cell Spanning**: Multi-row (`rowspan > 1`) and multi-column (`colspan > 1`) cells are explicitly rejected with descriptive `ConvertError` indicating table row/column coordinates to prevent silent truncation.
 
 ## Limitations (v1)
 

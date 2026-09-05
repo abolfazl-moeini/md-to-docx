@@ -35,4 +35,5 @@ python_files = ["test_*.py"]
 markers = [
     "mermaid: tests that run actual mmdc / mermaid-cli",
     "pandoc: tests that run actual pandoc binary",
+    "integration: end-to-end integration tests with external binaries",
 ]

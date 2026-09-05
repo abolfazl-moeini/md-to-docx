@@ -7,6 +7,8 @@ fonts:
   body: Vazirmatn
   heading: Vazirmatn
   code: Courier New
+font_files:
+  Vazirmatn: fonts/Vazirmatn-Regular.ttf
 page:
   size: A4
   margin_cm: { top: 2.0, bottom: 2.0, left: 2.0, right: 2.0 }

@@ -3,9 +3,10 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 from md_to_docx.template import Template, PROJECT_ROOT
 
@@ -101,14 +102,223 @@ def extract_mermaid_blocks(markdown_text: str) -> List[MermaidBlock]:
     return blocks
 
 
-def _find_browser_executable() -> Optional[str]:
-    """Finds a viable Chromium / Chrome / Edge browser executable for Puppeteer."""
-    env_path = os.environ.get("PUPPETEER_EXECUTABLE_PATH")
-    if env_path and Path(env_path).is_file():
-        return env_path
+MERMAID_TIMEOUT_SECONDS = 60.0
 
-    # Check system PATH
-    for bin_name in [
+
+def probe_mermaid_renderer(
+    browser_bin: Optional[str] = None,
+    template: Optional[Template] = None,
+    timeout: float = 30.0,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Actively probes whether the Mermaid renderer (mmdc + Chromium/Puppeteer) is operational.
+    Does NOT cache the result. Distinguishes launch, permission, architecture, and sandbox errors.
+    Returns (True, None) if operational, or (False, error_reason) on failure.
+    """
+    mmdc_cmd = _find_mmdc_cmd()
+    if mmdc_cmd and not shutil.which(mmdc_cmd[0]) and not Path(mmdc_cmd[0]).is_file():
+        return (False, f"Launch error: Mermaid CLI command '{mmdc_cmd[0]}' not found.")
+
+    target_browser = browser_bin or _find_browser_executable()
+    if not target_browser:
+        return (False, "Launch error: No Chromium/Chrome browser executable found.")
+
+    classified = _classify_browser_binary(target_browser)
+    if classified is not None:
+        return (False, classified)
+
+    tmpl = template or Template.load("purple_book")
+    with tempfile.TemporaryDirectory(prefix="mermaid_probe_") as probe_dir:
+        test_out = Path(probe_dir) / "probe.png"
+        try:
+            render_mermaid_to_png(
+                "graph TD\nA-->B",
+                test_out,
+                tmpl,
+                timeout=timeout,
+                browser_bin=target_browser,
+            )
+            if test_out.exists() and test_out.stat().st_size > 0:
+                return (True, None)
+            return (False, "Launch error: Probe diagram output was missing or empty.")
+        except ConvertError as e:
+            return (False, _classify_launch_message(str(e)))
+        except Exception as e:
+            return (False, f"Launch error: Unexpected probe failure: {e}")
+
+
+def _classify_launch_message(message: str) -> str:
+    msg = message.lower()
+    if "sandbox" in msg:
+        return f"Sandbox error: {message}"
+    if "permission" in msg or "eacces" in msg:
+        return f"Permission error: {message}"
+    if "architecture" in msg or "bad cpu" in msg or "exec format" in msg:
+        return f"Architecture error: {message}"
+    return f"Launch error: {message}"
+
+
+def _classify_browser_binary(target_browser: str) -> Optional[str]:
+    """Returns an error string if the binary cannot be executed, else None."""
+    browser_path = Path(target_browser)
+    if not browser_path.exists():
+        return f"Launch error: Browser binary '{target_browser}' does not exist."
+    if os.name != "nt" and not os.access(browser_path, os.X_OK):
+        return f"Permission error: Browser binary '{target_browser}' lacks execute permission."
+
+    try:
+        ver_proc = subprocess.run(
+            [str(browser_path), "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+        if ver_proc.returncode != 0:
+            err = (ver_proc.stderr or ver_proc.stdout).strip().lower()
+            if "bad cpu" in err or "exec format" in err or "architecture" in err:
+                return (
+                    f"Architecture error: Browser binary '{target_browser}' "
+                    f"is incompatible with host architecture: {err}"
+                )
+            if "permission" in err or "eacces" in err:
+                return f"Permission error: Permission denied launching '{target_browser}': {err}"
+            if "sandbox" in err:
+                return f"Sandbox error: Browser sandbox error launching '{target_browser}': {err}"
+            return (
+                f"Launch error: Browser binary '{target_browser}' "
+                f"exited with code {ver_proc.returncode}: {err}"
+            )
+    except PermissionError as e:
+        return f"Permission error: Permission denied executing '{target_browser}': {e}"
+    except OSError as e:
+        err_str = str(e).lower()
+        if "exec format" in err_str or "bad cpu" in err_str:
+            return f"Architecture error: Binary '{target_browser}' architecture mismatch: {e}"
+        return f"Launch error: Failed to execute '{target_browser}': {e}"
+    except subprocess.TimeoutExpired:
+        return f"Launch error: Browser --version timed out at '{target_browser}'."
+    return None
+
+
+_BROWSER_FULL_NAMES = {
+    "Google Chrome for Testing",
+    "chrome",
+    "chrome.exe",
+    "chromium",
+    "Chromium",
+}
+_BROWSER_FALLBACK_NAMES = {
+    "chrome-headless-shell",
+    "headless_shell",
+}
+_SKIP_BROWSER_DIR_PARTS = {"Helpers", "Frameworks"}
+
+
+def _puppeteer_cache_dirs() -> List[Path]:
+    dirs: List[Path] = []
+    env_dir = os.environ.get("PUPPETEER_CACHE_DIR")
+    if env_dir:
+        dirs.append(Path(env_dir))
+    dirs.extend(
+        [
+            Path.home() / ".cache" / "puppeteer",
+            Path.home() / "Library" / "Caches" / "puppeteer",
+            PROJECT_ROOT / "node_modules" / ".cache" / "puppeteer",
+        ]
+    )
+    seen: set[str] = set()
+    unique: List[Path] = []
+    for d in dirs:
+        key = str(d)
+        if key not in seen:
+            seen.add(key)
+            unique.append(d)
+    return unique
+
+
+def _chrome_version_key(path: Path) -> Tuple[int, int, int, int]:
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)\.(\d+)", str(path))
+    if match:
+        return tuple(int(g) for g in match.groups())  # type: ignore[return-value]
+    return (0, 0, 0, 0)
+
+
+def _is_usable_browser_binary(path: Path, names: Iterable[str]) -> bool:
+    if path.name not in names or not path.is_file():
+        return False
+    if any(part in _SKIP_BROWSER_DIR_PARTS for part in path.parts):
+        return False
+    if os.name != "nt" and not os.access(path, os.X_OK):
+        return False
+    return True
+
+
+def _browsers_in_puppeteer_cache() -> List[str]:
+    """Puppeteer-managed Chrome, newest full browser first, headless-shell last."""
+    found_full: List[Path] = []
+    found_fallback: List[Path] = []
+    names = tuple(_BROWSER_FULL_NAMES | _BROWSER_FALLBACK_NAMES)
+    for cdir in _puppeteer_cache_dirs():
+        if not cdir.is_dir():
+            continue
+        for name in names:
+            for candidate in cdir.rglob(name):
+                if _is_usable_browser_binary(candidate, _BROWSER_FULL_NAMES):
+                    found_full.append(candidate)
+                elif _is_usable_browser_binary(candidate, _BROWSER_FALLBACK_NAMES):
+                    found_fallback.append(candidate)
+
+    found_full.sort(key=_chrome_version_key, reverse=True)
+    found_fallback.sort(key=_chrome_version_key, reverse=True)
+    result: List[str] = []
+    seen: set[str] = set()
+    for path in found_full + found_fallback:
+        resolved = str(path.resolve())
+        if resolved not in seen:
+            seen.add(resolved)
+            result.append(resolved)
+    return result
+
+
+def _system_browser_candidates() -> List[str]:
+    return [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        str(Path.home() / "Applications/Chromium.app/Contents/MacOS/Chromium"),
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/snap/bin/chromium",
+    ]
+
+
+def _iter_browser_candidates() -> List[str]:
+    """Preference order: env override, Puppeteer cache, PATH, then system apps."""
+    seen: set[str] = set()
+    ordered: List[str] = []
+
+    def add(path_str: Optional[str]) -> None:
+        if not path_str:
+            return
+        path = Path(path_str)
+        if not path.is_file():
+            return
+        key = str(path.resolve())
+        if key in seen:
+            return
+        seen.add(key)
+        ordered.append(key)
+
+    add(os.environ.get("PUPPETEER_EXECUTABLE_PATH"))
+    for cached in _browsers_in_puppeteer_cache():
+        add(cached)
+    for bin_name in (
         "google-chrome",
         "google-chrome-stable",
         "chromium",
@@ -117,48 +327,17 @@ def _find_browser_executable() -> Optional[str]:
         "brave-browser",
         "microsoft-edge",
         "msedge",
-    ]:
-        found = shutil.which(bin_name)
-        if found and Path(found).is_file():
-            return found
+    ):
+        add(shutil.which(bin_name))
+    for candidate in _system_browser_candidates():
+        add(candidate)
+    return ordered
 
-    # macOS app paths
-    macos_candidates = [
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-        str(Path.home() / "Applications/Chromium.app/Contents/MacOS/Chromium"),
-    ]
-    for p in macos_candidates:
-        if Path(p).is_file():
-            return p
 
-    # Linux paths
-    linux_candidates = [
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-        "/snap/bin/chromium",
-    ]
-    for p in linux_candidates:
-        if Path(p).is_file():
-            return p
-
-    # Puppeteer cache
-    cache_dirs = [
-        Path.home() / ".cache" / "puppeteer",
-        Path.home() / "Library" / "Caches" / "puppeteer",
-    ]
-    for cdir in cache_dirs:
-        if cdir.is_dir():
-            for chrome_bin in cdir.glob("**/chrome"):
-                if chrome_bin.is_file() and os.access(chrome_bin, os.X_OK):
-                    return str(chrome_bin.resolve())
-
-    return None
+def _find_browser_executable() -> Optional[str]:
+    """Finds a Chromium-family binary, preferring Puppeteer's bundled Chrome over system Chrome."""
+    candidates = _iter_browser_candidates()
+    return candidates[0] if candidates else None
 
 
 def _find_mmdc_cmd() -> List[str]:
@@ -181,11 +360,14 @@ def _find_mmdc_cmd() -> List[str]:
     return ["mmdc"]
 
 
-def _get_puppeteer_config_path(template: Template, work_dir: Path) -> Path:
-    """Writes a runtime puppeteer config that always includes --no-sandbox flags."""
+def _get_puppeteer_config_path(template: Template, work_dir: Path, browser_bin: Optional[str] = None) -> Path:
+    """Writes a runtime puppeteer config that includes --no-sandbox flags and explicit executablePath."""
     cfg: dict = {
         "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
     }
+    if browser_bin:
+        cfg["executablePath"] = str(browser_bin)
+
     if template.mermaid_puppeteer_path and template.mermaid_puppeteer_path.exists():
         try:
             existing = json.loads(template.mermaid_puppeteer_path.read_text(encoding="utf-8"))
@@ -198,6 +380,8 @@ def _get_puppeteer_config_path(template: Template, work_dir: Path) -> Path:
                 if flag not in user_args:
                     user_args.append(flag)
             merged["args"] = user_args
+            if browser_bin:
+                merged["executablePath"] = str(browser_bin)
             cfg = merged
 
     runtime_cfg = work_dir / "puppeteer-runtime.json"
@@ -243,65 +427,70 @@ def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]
     return None
 
 
-def render_mermaid_to_png(mmd_code: str, output_path: Path, template: Template) -> Path:
+def render_mermaid_to_png(
+    mmd_code: str,
+    output_path: Path,
+    template: Template,
+    timeout: float = MERMAID_TIMEOUT_SECONDS,
+    browser_bin: Optional[str] = None,
+) -> Path:
     """
     Renders Mermaid code into a PNG image using mermaid-cli (mmdc).
-    Fails explicitly with ConvertError if compilation fails or produces an empty file.
+    Fails explicitly with ConvertError if compilation fails, times out, or produces an empty file.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_mmd = output_path.with_suffix(".mmd")
-    temp_mmd.write_text(mmd_code, encoding="utf-8")
-
     mmdc_cmd = _find_mmdc_cmd()
-    cmd = (
-        list(mmdc_cmd)
-        + [
-            "-i", str(temp_mmd),
-            "-o", str(output_path),
-            "-s", str(template.mermaid.get("scale", 3)),
-            "-b", "white",
-        ]
-    )
+    target_browser = browser_bin or _find_browser_executable()
 
-    if template.mermaid_theme_path and template.mermaid_theme_path.exists():
-        cmd.extend(["-c", str(template.mermaid_theme_path)])
+    with tempfile.TemporaryDirectory(prefix="mmdc_work_") as work:
+        work_dir = Path(work)
+        temp_mmd = work_dir / "diagram.mmd"
+        temp_mmd.write_text(mmd_code, encoding="utf-8")
 
-    css_path = _effective_mermaid_css(template, output_path.parent)
-    if css_path:
-        cmd.extend(["-C", str(css_path)])
-
-    puppeteer_cfg = _get_puppeteer_config_path(template, output_path.parent)
-    cmd.extend(["-p", str(puppeteer_cfg)])
-
-    browser_bin = _find_browser_executable()
-    env = dict(os.environ)
-    if browser_bin:
-        env["PUPPETEER_EXECUTABLE_PATH"] = browser_bin
-
-    try:
-        proc = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            env=env,
+        cmd = (
+            list(mmdc_cmd)
+            + [
+                "-i", str(temp_mmd),
+                "-o", str(output_path),
+                "-s", str(template.mermaid.get("scale", 3)),
+                "-b", "white",
+            ]
         )
-    except FileNotFoundError as e:
-        raise ConvertError(
-            f"Mermaid CLI executable not found: {e}. Run 'npm install' or 'scripts/bootstrap.sh' to install dependencies."
-        ) from e
-    finally:
-        # Resource cleanup (F-14)
-        if temp_mmd.exists():
-            try:
-                temp_mmd.unlink()
-            except OSError:
-                pass
+
+        if template.mermaid_theme_path and template.mermaid_theme_path.exists():
+            cmd.extend(["-c", str(template.mermaid_theme_path)])
+
+        css_path = _effective_mermaid_css(template, work_dir)
+        if css_path:
+            cmd.extend(["-C", str(css_path)])
+
+        puppeteer_cfg = _get_puppeteer_config_path(template, work_dir, browser_bin=target_browser)
+        cmd.extend(["-p", str(puppeteer_cfg)])
+
+        env = dict(os.environ)
+        if target_browser:
+            env["PUPPETEER_EXECUTABLE_PATH"] = target_browser
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                env=env,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise ConvertError(f"Mermaid compilation timed out after {timeout} seconds.") from e
+        except FileNotFoundError as e:
+            raise ConvertError(
+                f"Mermaid CLI executable not found: {e}. Run 'npm install' or 'scripts/bootstrap.sh' to install dependencies."
+            ) from e
 
     if proc.returncode != 0:
         err_msg = proc.stderr.strip() or proc.stdout.strip()
-        browser_info = browser_bin if browser_bin else "None found"
+        browser_info = target_browser if target_browser else "None found"
         raise ConvertError(
             f"Mermaid compilation failed with exit code {proc.returncode}:\n"
             f"{err_msg}\n"
@@ -324,10 +513,20 @@ def process_mermaid_blocks(
     output_dir: Path,
     template: Template,
     render_fn: Optional[Callable[[str, Path, Template], Path]] = None,
+    use_relative_paths: bool = False,
+    base_dir: Optional[Path] = None,
 ) -> str:
     """
     Extracts each Mermaid block, compiles it to PNG, and replaces the block
     and its following caption with a pandoc Div container.
+
+    Lifecycle and API Contract:
+    - The caller owns `output_dir` and is responsible for its retention or cleanup.
+    - Each diagram is persisted as 'diagram_{index:03d}.png' in `output_dir`.
+    - When `use_relative_paths=True` and `base_dir` is provided, relative POSIX
+      paths are written into Markdown; otherwise absolute POSIX paths are used.
+    - Callers requiring isolated, concurrency-safe execution across parallel runs
+      should provide distinct output directories (e.g. staging directories).
     """
     blocks = extract_mermaid_blocks(markdown_text)
     if not blocks:
@@ -343,12 +542,20 @@ def process_mermaid_blocks(
         img_path = output_dir / img_name
         render(blk.code, img_path, template)
 
+        if use_relative_paths and base_dir:
+            try:
+                img_ref = Path(os.path.relpath(img_path, base_dir)).as_posix()
+            except ValueError:
+                img_ref = img_path.as_posix()
+        else:
+            img_ref = img_path.as_posix()
+
         escaped_caption = (blk.caption or "").replace('"', '\\"')
         caption_attr = f' caption="{escaped_caption}"' if blk.caption else ""
 
         replacement = [
             f"::: {{.mermaid-figure{caption_attr}}}",
-            f"![]({img_path.as_posix()})",
+            f"![]({img_ref})",
             ":::",
         ]
 
@@ -358,3 +565,4 @@ def process_mermaid_blocks(
 
     ending = "\n" if markdown_text.endswith("\n") else ""
     return "\n".join(lines) + ending
+

@@ -142,6 +142,22 @@ def test_template_missing_referenced_file(tmp_path):
     assert "non_existent_theme.json" in str(exc_info.value)
 
 
+def test_template_missing_font_file(tmp_path):
+    (tmp_path / "config.yaml").write_text(
+        "schema_version: 1\nname: bad\ndirection: rtl\n"
+        "fonts: {body: Vazirmatn, heading: Vazirmatn, code: Courier New}\n"
+        "colors: {primary: '6B2FA0', primary_dark: '4A156D', on_primary: 'FFF', quote_bg: 'EEE', warning_bg: 'FFF', warning_title: '888', body: '222', caption: '555'}\n"
+        "headings: {}\ncallouts: {}\nquotes: {}\ntables: {}\n"
+        "font_files:\n  Vazirmatn: fonts/missing.ttf\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(TemplateValidationError) as exc_info:
+        Template.load(tmp_path)
+    err = str(exc_info.value)
+    assert "fonts/missing.ttf" in err
+    assert "font_files.Vazirmatn" in err
+
+
 def test_template_missing_referenced_custom_shell(tmp_path):
     (tmp_path / "config.yaml").write_text(
         "schema_version: 1\nname: bad\ndirection: rtl\n"

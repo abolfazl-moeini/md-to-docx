@@ -134,6 +134,68 @@ def test_puppeteer_runtime_config_always_includes_no_sandbox(tmp_path):
     assert "--disable-setuid-sandbox" in data.get("args", [])
 
 
+def test_puppeteer_runtime_config_sets_explicit_executable_path(tmp_path):
+    from md_to_docx.mermaid import _get_puppeteer_config_path
+    import json
+    tmpl = Template.load("purple_book")
+    browser = tmp_path / "Google Chrome for Testing"
+    browser.write_text("", encoding="utf-8")
+    cfg_path = _get_puppeteer_config_path(tmpl, tmp_path, browser_bin=str(browser))
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert data["executablePath"] == str(browser)
+    assert "--no-sandbox" in data["args"]
+
+
+def test_find_browser_prefers_puppeteer_chrome_for_testing(tmp_path, monkeypatch):
+    from md_to_docx import mermaid as mermaid_mod
+
+    cache = tmp_path / "puppeteer"
+    older = (
+        cache / "chrome" / "mac_arm-121.0.6167.85" / "chrome-mac-arm64"
+        / "Google Chrome for Testing.app" / "Contents" / "MacOS" / "Google Chrome for Testing"
+    )
+    newer = (
+        cache / "chrome" / "mac_arm-152.0.7977.75" / "chrome-mac-arm64"
+        / "Google Chrome for Testing.app" / "Contents" / "MacOS" / "Google Chrome for Testing"
+    )
+    helper = (
+        cache / "chrome" / "mac_arm-152.0.7977.75" / "chrome-mac-arm64"
+        / "Google Chrome for Testing.app" / "Contents" / "Frameworks" / "F.framework"
+        / "Helpers" / "Google Chrome for Testing Helper.app" / "Contents" / "MacOS"
+        / "Google Chrome for Testing"
+    )
+    system_chrome = tmp_path / "Applications" / "Google Chrome.app" / "Contents" / "MacOS" / "Google Chrome"
+    for path in (older, newer, helper, system_chrome):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/bin/sh\n", encoding="utf-8")
+        path.chmod(0o755)
+
+    monkeypatch.setattr(mermaid_mod, "_puppeteer_cache_dirs", lambda: [cache])
+    monkeypatch.setattr(mermaid_mod, "_system_browser_candidates", lambda: [str(system_chrome)])
+    monkeypatch.setattr(mermaid_mod.shutil, "which", lambda _name: None)
+    monkeypatch.delenv("PUPPETEER_EXECUTABLE_PATH", raising=False)
+
+    found = mermaid_mod._find_browser_executable()
+    assert found == str(newer.resolve())
+    assert "Helpers" not in found
+    assert "Google Chrome.app" not in found
+
+
+def test_render_mermaid_does_not_pollute_output_dir(mocker, tmp_path):
+    tmpl = Template.load("purple_book")
+    mock_run = mocker.patch("subprocess.run")
+    mock_run.return_value.returncode = 0
+    mock_run.return_value.stderr = ""
+    mock_run.return_value.stdout = ""
+
+    out_file = tmp_path / "diagram_001.png"
+    out_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    render_mermaid_to_png("graph TD\nA-->B", out_file, tmpl)
+
+    leftover = {p.name for p in tmp_path.iterdir()}
+    assert leftover == {"diagram_001.png"}
+
+
 def test_mermaid_artifact_persistence_after_context_exit(tmp_path):
     """Verifies that generated diagram images remain accessible on disk after processing."""
     from md_to_docx.pipeline import convert_markdown_to_docx
@@ -163,3 +225,58 @@ def test_mermaid_artifact_persistence_after_context_exit(tmp_path):
     diagrams = list(media_dir.glob("*.png"))
     assert len(diagrams) >= 1, "Diagram PNG must persist on disk"
     assert diagrams[0].stat().st_size > 0, "Persisted diagram must not be empty"
+
+
+@pytest.mark.mermaid
+@pytest.mark.integration
+def test_real_persian_mermaid_rendering_integration(tmp_path):
+    """R3-01: End-to-end integration test executing real mmdc with Persian text, asserting on PNG and DOCX."""
+    import zipfile
+    from lxml import etree
+    from md_to_docx.mermaid import probe_mermaid_renderer, render_mermaid_to_png
+    from md_to_docx.pipeline import convert_markdown_to_docx
+
+    can_render, reason = probe_mermaid_renderer()
+    if not can_render:
+        pytest.skip(f"Mermaid renderer not operational: {reason}")
+
+    tmpl = Template.load("purple_book")
+
+    # 1. Direct render of Persian Mermaid diagram to PNG
+    png_out = tmp_path / "persian_diag.png"
+    persian_mmd = """graph TD
+    Client["درخواست کاربر"] --> Engine["پردازش در موتور داده"]
+    Engine --> DB["ثبت نهایی در دیتابیس"]
+"""
+    rendered_path = render_mermaid_to_png(persian_mmd, png_out, tmpl)
+    assert rendered_path == png_out
+    assert png_out.exists(), "Rendered PNG must exist on disk"
+    content = png_out.read_bytes()
+    assert content.startswith(b"\x89PNG\r\n\x1a\n"), "File must have valid PNG signature"
+    assert len(content) > 2000, f"Persian diagram PNG must be substantial, got {len(content)} bytes"
+
+    # 2. Pipeline integration: Markdown with Persian Mermaid converted to DOCX
+    md_file = tmp_path / "persian_mermaid.md"
+    md_file.write_text(
+        "# معماری سیستم\n\n"
+        "```mermaid\n"
+        + persian_mmd
+        + "```\n"
+        "شکل ۱. نمودار معماری پردازش فارسی\n",
+        encoding="utf-8",
+    )
+    docx_file = tmp_path / "persian_mermaid.docx"
+    saved_path = convert_markdown_to_docx(md_file, docx_file, template=tmpl)
+    assert saved_path == docx_file.resolve()
+    assert docx_file.exists()
+    assert docx_file.stat().st_size > 20_000
+
+    # 3. Verify DOCX zip package contains the rendered diagram and caption
+    with zipfile.ZipFile(docx_file, "r") as z:
+        media_files = [n for n in z.namelist() if n.startswith("word/media/")]
+        assert len(media_files) >= 1, "DOCX package must contain diagram image in word/media/"
+        doc_xml = z.read("word/document.xml")
+        tree = etree.fromstring(doc_xml)
+        all_text = "".join(tree.xpath("//w:t/text()", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}))
+        assert "شکل ۱. نمودار معماری پردازش فارسی" in all_text
+
