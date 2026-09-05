@@ -73,3 +73,12 @@ def calculate_metrics(items: list) -> int:
 ```sql
 SELECT id, name, status FROM Services WHERE active = 1;
 ```
+
+::: note نکتهٔ اجرایی در کادر
+متن راهنما درون کادر یادداشت همراه با بلاک کد تو در تو:
+
+```typescript
+const isServiceHealthy = (status: number): boolean => status === 200;
+```
+:::
+

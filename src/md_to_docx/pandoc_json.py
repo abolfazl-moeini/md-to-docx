@@ -1,5 +1,6 @@
 """Pandoc JSON AST adapter and AST-to-DOCX converter."""
 
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from docx import Document
@@ -13,7 +14,7 @@ from docx.oxml.ns import qn
 from md_to_docx.headings import parse_heading
 from md_to_docx.renderer import DocxRenderer
 from md_to_docx.mermaid import ConvertError, CAPTION_RE
-from md_to_docx.bidi import contains_persian
+from md_to_docx.bidi import contains_persian, to_persian_digits
 from md_to_docx.oxml import (
     set_paragraph_bidi,
     set_paragraph_align,
@@ -26,6 +27,12 @@ from md_to_docx.oxml import (
     set_cell_borders,
     set_paragraph_quote_border,
     set_paragraph_shading,
+)
+
+
+DANGEROUS_HTML_RE = re.compile(
+    r"<\s*(?:script|iframe|object|embed|applet|style|form|input)\b",
+    re.IGNORECASE,
 )
 
 
@@ -219,6 +226,8 @@ def emit_inlines(
         elif t == "RawInline":
             raw_text = c[1] if isinstance(c, list) and len(c) > 1 else str(c)
             stripped = str(raw_text).strip()
+            if DANGEROUS_HTML_RE.search(stripped):
+                raise ConvertError(f"Unsupported or dangerous raw HTML inline in Markdown: '{stripped}'")
             if stripped in ("\\pagebreak", "\\newpage", "<!-- pagebreak -->", "<!-- newpage -->") or (
                 "<w:br" in stripped and 'type="page"' in stripped
             ):
@@ -358,6 +367,13 @@ def blocks_to_text(blocks: List[Dict[str, Any]]) -> str:
                         for cell in cells:
                             cell_blks = cell[4] if len(cell) > 4 and isinstance(cell[4], list) else []
                             lines.append(blocks_to_text(cell_blks))
+                tfoot = c[5] if len(c) > 5 and isinstance(c[5], list) else []
+                foot_rows = tfoot[1] if len(tfoot) > 1 and isinstance(tfoot[1], list) else []
+                for row in foot_rows:
+                    cells = row[1] if isinstance(row, list) and len(row) > 1 and isinstance(row[1], list) else []
+                    for cell in cells:
+                        cell_blks = cell[4] if len(cell) > 4 and isinstance(cell[4], list) else []
+                        lines.append(blocks_to_text(cell_blks))
         elif t == "LineBlock":
             for line in (c or []):
                 if isinstance(line, list):
@@ -766,21 +782,7 @@ def render_block(
         code_str = c[1] if isinstance(c, list) and len(c) > 1 else str(c)
         classes = attr[1] if isinstance(attr, list) and len(attr) > 1 and isinstance(attr[1], list) else []
         lang = classes[0] if classes else None
-        if container is None:
-            renderer.render_code_block(code_str, language=lang)
-        else:
-            code_font = renderer.template.fonts.get("code", "Courier New")
-            norm_code = code_str.replace("\r\n", "\n").replace("\r", "\n")
-            if norm_code.endswith("\n"):
-                norm_code = norm_code[:-1]
-            lines = norm_code.splitlines() or [""]
-            for line in lines:
-                p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
-                set_paragraph_bidi(p, bidi=False)
-                set_paragraph_align(p, "start")
-                p.paragraph_format.line_spacing = 1.0
-                p.paragraph_format.space_after = Pt(1)
-                renderer.append_text(p, line, font_size_pt=9.5, font_name=code_font, force_ltr=True)
+        renderer.render_code_block(code_str, language=lang, container=container)
 
     elif t == "BulletList":
         for item_idx, item_blocks in enumerate(c):
@@ -840,7 +842,8 @@ def render_block(
                     else:
                         p.paragraph_format.left_indent = indent
                     if blk_idx == 0:
-                        r_mark = p.add_run(f"{marker} ")
+                        disp_marker = to_persian_digits(marker) if is_rtl else marker
+                        r_mark = p.add_run(f"{disp_marker} ")
                         set_run_cs_font(r_mark, font_name=renderer.template.fonts.get("body", "Vazirmatn"), size_pt=10.5)
                     emit_inlines(blk.get("c", []), renderer, p, font_size_pt=10.5)
                 else:
@@ -874,11 +877,28 @@ def render_block(
                         is_rtl_d = contains_persian(d_text) if renderer.template.direction == "rtl" else False
                         set_paragraph_bidi(p_def, bidi=is_rtl_d)
                         set_paragraph_align(p_def, "both")
-                        p_def.paragraph_format.left_indent = Inches(0.3)
+                        if is_rtl_d:
+                            p_def.paragraph_format.right_indent = Inches(0.3)
+                        else:
+                            p_def.paragraph_format.left_indent = Inches(0.3)
                         p_def.paragraph_format.space_after = Pt(4)
                         emit_inlines(db.get("c", []), renderer, p_def, font_size_pt=10.5)
                     else:
                         render_block(db, renderer, container=container, path=f"{path}.DefinitionList[{i}].def[{d_idx}].{db.get('t', 'Unknown')}")
+
+    elif t == "LineBlock":
+        for line in (c or []):
+            if not isinstance(line, list):
+                continue
+            if container is not None:
+                p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
+                txt = inlines_to_text(line)
+                is_rtl = contains_persian(txt) if renderer.template.direction == "rtl" else False
+                set_paragraph_bidi(p, bidi=is_rtl)
+                set_paragraph_align(p, "start")
+                emit_inlines(line, renderer, p, font_size_pt=10.5)
+            else:
+                emit_paragraph_inlines(line, renderer)
 
     elif t == "HorizontalRule":
         renderer.render_horizontal_rule(container=container)
@@ -886,6 +906,8 @@ def render_block(
     elif t == "RawBlock":
         raw_text = c[1] if isinstance(c, list) and len(c) > 1 else str(c)
         stripped = raw_text.strip()
+        if DANGEROUS_HTML_RE.search(stripped):
+            raise ConvertError(f"Unsupported or dangerous raw HTML in Markdown: '{stripped}' at {path}")
         if stripped in ("\\pagebreak", "\\newpage", "<!-- pagebreak -->", "<!-- newpage -->") or (
             "<w:br" in stripped and 'type="page"' in stripped
         ):

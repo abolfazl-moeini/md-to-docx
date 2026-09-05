@@ -144,6 +144,52 @@ def test_puppeteer_runtime_config_sets_explicit_executable_path(tmp_path):
     data = json.loads(cfg_path.read_text(encoding="utf-8"))
     assert data["executablePath"] == str(browser)
     assert "--no-sandbox" in data["args"]
+    assert data["headless"] is True
+
+
+def test_puppeteer_headless_shell_for_chrome_headless_shell(tmp_path):
+    from md_to_docx.mermaid import _get_puppeteer_config_path
+    import json
+    tmpl = Template.load("purple_book")
+    shell = tmp_path / "chrome-headless-shell"
+    shell.write_text("", encoding="utf-8")
+    cfg_path = _get_puppeteer_config_path(tmpl, tmp_path, browser_bin=str(shell))
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert data["headless"] == "shell"
+    assert data["executablePath"] == str(shell)
+
+
+def test_render_mermaid_retries_next_browser_on_launch_failure(tmp_path, mocker, monkeypatch):
+    import subprocess
+    from md_to_docx import mermaid as mermaid_mod
+
+    tmpl = Template.load("purple_book")
+    bad = tmp_path / "broken-chrome"
+    good = tmp_path / "Google Chrome for Testing"
+    bad.write_text("", encoding="utf-8")
+    good.write_text("", encoding="utf-8")
+    monkeypatch.setattr(mermaid_mod, "_iter_browser_candidates", lambda: [str(bad), str(good)])
+
+    def fake_run(*args, **kwargs):
+        env = kwargs.get("env") or {}
+        exe = env.get("PUPPETEER_EXECUTABLE_PATH", "")
+        if str(bad) in exe:
+            return subprocess.CompletedProcess(
+                args=args[0] if args else [],
+                returncode=1,
+                stdout="",
+                stderr="Failed to launch the browser process",
+            )
+        out_idx = args[0].index("-o")
+        out = Path(args[0][out_idx + 1])
+        out.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+
+    mocker.patch("subprocess.run", side_effect=fake_run)
+    out_file = tmp_path / "diagram.png"
+    result = render_mermaid_to_png("graph TD\nA-->B", out_file, tmpl)
+    assert result == out_file
+    assert out_file.exists()
 
 
 def test_find_browser_prefers_puppeteer_chrome_for_testing(tmp_path, monkeypatch):
@@ -279,4 +325,35 @@ def test_real_persian_mermaid_rendering_integration(tmp_path):
         tree = etree.fromstring(doc_xml)
         all_text = "".join(tree.xpath("//w:t/text()", namespaces={"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}))
         assert "شکل ۱. نمودار معماری پردازش فارسی" in all_text
+
+
+def test_effective_mermaid_css_dynamic_font(tmp_path):
+    """R3-01 / R3-06: Verifies _effective_mermaid_css injects custom font-family and resolves font URL."""
+    from md_to_docx.mermaid import _effective_mermaid_css
+    tmpl_dir = tmp_path / "custom_tmpl"
+    tmpl_dir.mkdir()
+    (tmpl_dir / "fonts").mkdir()
+    font_file = tmpl_dir / "fonts" / "Sahel-Regular.ttf"
+    font_file.write_bytes(b"\x00" * 20)
+    (tmpl_dir / "mermaid.css").write_text("body { font-family: 'Vazirmatn'; }\n", encoding="utf-8")
+    cfg_file = tmpl_dir / "config.yaml"
+    cfg_file.write_text(
+        "schema_version: 1\nname: custom\ndirection: rtl\n"
+        "fonts: {body: Sahel, heading: Sahel, code: Consolas}\n"
+        "font_files: {Sahel: fonts/Sahel-Regular.ttf}\n"
+        "colors: {primary: '6B2FA0', primary_dark: '4A156D', on_primary: 'FFF', quote_bg: 'EEE', warning_bg: 'FFF', warning_title: '888', body: '222', caption: '555'}\n"
+        "headings: {}\ncallouts: {}\nquotes: {}\ntables: {}\n"
+        "mermaid: {css_file: mermaid.css}\n",
+        encoding="utf-8",
+    )
+    tmpl = Template.load(tmpl_dir)
+    work = tmp_path / "work"
+    work.mkdir()
+    css_path = _effective_mermaid_css(tmpl, work)
+    assert css_path is not None
+    css_content = css_path.read_text(encoding="utf-8")
+    assert "font-family: 'Sahel'" in css_content
+    assert font_file.resolve().as_uri() in css_content
+    assert "Sahel" in css_content
+
 

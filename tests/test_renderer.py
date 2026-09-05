@@ -18,6 +18,7 @@ def renderer(template):
 def test_normal_style_has_cs_font_and_bidi(renderer):
     xml = renderer.doc.styles["Normal"].element.xml
     assert 'w:cs="Vazirmatn"' in xml
+    assert 'w:ascii="Segoe UI"' in xml
     assert "<w:bidi" in xml
     assert 'w:szCs' in xml
     assert 'w:jc w:val="both"' in xml
@@ -47,6 +48,19 @@ def test_render_heading_with_badge(renderer):
     cell1_xml = cell1._tc.xml
     assert "Database Engine" in cell1_xml
     assert 'w:bottom' in cell1_xml
+
+    # Verify font fallback on heading title runs (R3-06)
+    runs = cell1.paragraphs[0].runs
+    latin_runs = [r for r in runs if "Database Engine" in r.text]
+    assert len(latin_runs) == 1, "Expected single Latin run for 'Database Engine'"
+    latin_rFonts = latin_runs[0]._r.find(qn("w:rPr")).find(qn("w:rFonts"))
+    assert latin_rFonts.get(qn("w:ascii")) == "Segoe UI"
+    assert latin_rFonts.get(qn("w:cs")) == "Vazirmatn"
+
+    persian_runs = [r for r in runs if "نقش" in r.text]
+    assert len(persian_runs) == 1, "Expected Persian run for 'نقش'"
+    persian_rFonts = persian_runs[0]._r.find(qn("w:rPr")).find(qn("w:rFonts"))
+    assert persian_rFonts.get(qn("w:cs")) == "Vazirmatn"
 
 def test_render_heading_without_number(renderer):
     info = HeadingInfo(level=1, number=None, title="مقدمه", raw_text="")
@@ -453,6 +467,13 @@ def test_render_definition_list(renderer):
     assert "واژه ب" in all_text
     assert "توضیح واژه ب" in all_text
 
+    # Paragraphs: [0]=Term A, [1]=Def A, [2]=واژه ب, [3]=توضیح واژه ب
+    p_fa_def = renderer.doc.paragraphs[3]
+    assert p_fa_def.paragraph_format.right_indent is not None, "Persian definition in RTL must have right_indent"
+    assert p_fa_def.paragraph_format.right_indent > 0
+    assert p_fa_def.paragraph_format.left_indent is None or p_fa_def.paragraph_format.left_indent == 0, "Persian definition in RTL must not have left_indent"
+
+
 
 def test_render_horizontal_rule(renderer):
     p = renderer.render_horizontal_rule()
@@ -497,6 +518,78 @@ def test_render_page_break(renderer):
     last_p = renderer.doc.paragraphs[-1]
     xml = last_p._p.xml
     assert 'w:type="page"' in xml
+
+
+def test_custom_template_font_fallback_propagation(tmp_path):
+    """R3-06: Verifies that changing fonts.body and fonts.latin in custom template propagates to Normal style, headings, paragraphs, tables, callouts, and captions without hardcoding Vazirmatn."""
+    custom_cfg = tmp_path / "config.yaml"
+    custom_cfg.write_text(
+        "schema_version: 1\n"
+        "name: custom_font_tmpl\n"
+        "direction: rtl\n"
+        "language_bidi: fa-IR\n"
+        "language_latin: en-US\n"
+        "fonts:\n"
+        "  body: Sahel\n"
+        "  heading: Shabnam\n"
+        "  latin: Arial\n"
+        "  code: Consolas\n"
+        "colors: {primary: '6B2FA0', primary_dark: '4A156D', on_primary: 'FFFFFF', quote_bg: 'ECE4F1', warning_bg: 'FBF7F4', warning_title: '8B6914', body: '2D2D2D', caption: '5A5A5A'}\n"
+        "headings: {badge: true, extract_number: true}\n"
+        "callouts: {note: {classes: [note], default_title: 'نکته'}}\n"
+        "quotes: {}\n"
+        "tables: {bidi_visual: true}\n"
+        "code_block: {}\n",
+        encoding="utf-8",
+    )
+    tmpl = Template.load(tmp_path)
+    doc = Document()
+    renderer = DocxRenderer(doc, tmpl)
+
+    # 1. Normal style
+    normal_xml = doc.styles["Normal"].element.xml
+    assert 'w:cs="Sahel"' in normal_xml
+    assert 'w:ascii="Arial"' in normal_xml
+
+    # 2. Paragraph with mixed Persian and Latin
+    p = renderer.render_paragraph("این یک تست است with English text.")
+    runs = p.runs
+    latin_runs = [r for r in runs if "English" in r.text]
+    assert len(latin_runs) == 1
+    l_rFonts = latin_runs[0]._r.find(qn("w:rPr")).find(qn("w:rFonts"))
+    assert l_rFonts.get(qn("w:ascii")) == "Arial"
+    assert l_rFonts.get(qn("w:cs")) == "Sahel"
+
+    persian_runs = [r for r in runs if "تست" in r.text]
+    assert len(persian_runs) >= 1
+    p_rFonts = persian_runs[0]._r.find(qn("w:rPr")).find(qn("w:rFonts"))
+    assert p_rFonts.get(qn("w:cs")) == "Sahel"
+
+    # 3. Heading with badge
+    info = HeadingInfo(level=1, number="۱", title="عنوان تست with Latin", raw_text="")
+    tbl_h = renderer.render_heading(info)
+    title_runs = tbl_h.cell(0, 1).paragraphs[0].runs
+    h_latin = [r for r in title_runs if "Latin" in r.text]
+    assert len(h_latin) == 1
+    hl_rFonts = h_latin[0]._r.find(qn("w:rPr")).find(qn("w:rFonts"))
+    assert hl_rFonts.get(qn("w:ascii")) == "Arial"
+    assert hl_rFonts.get(qn("w:cs")) == "Shabnam"
+
+    # 4. Table header & body
+    tbl = renderer.render_table(headers=["ستون Header"], rows=[["داده Cell"]])
+    th_runs = tbl.cell(0, 0).paragraphs[0].runs
+    th_latin = [r for r in th_runs if "Header" in r.text]
+    assert len(th_latin) == 1
+    thl_rFonts = th_latin[0]._r.find(qn("w:rPr")).find(qn("w:rFonts"))
+    assert thl_rFonts.get(qn("w:ascii")) == "Arial"
+    assert thl_rFonts.get(qn("w:cs")) == "Shabnam"
+
+    tb_runs = tbl.cell(1, 0).paragraphs[0].runs
+    tb_latin = [r for r in tb_runs if "Cell" in r.text]
+    assert len(tb_latin) == 1
+    tbl_rFonts = tb_latin[0]._r.find(qn("w:rPr")).find(qn("w:rFonts"))
+    assert tbl_rFonts.get(qn("w:ascii")) == "Arial"
+    assert tbl_rFonts.get(qn("w:cs")) == "Sahel"
 
 
 

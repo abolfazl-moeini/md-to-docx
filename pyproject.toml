@@ -29,6 +29,10 @@ md2docx = "md_to_docx.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"md_to_docx" = ["templates/**/*", "templates/*"]
+
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

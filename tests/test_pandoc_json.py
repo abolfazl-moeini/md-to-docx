@@ -2,9 +2,11 @@ import json
 import pytest
 from pathlib import Path
 from docx import Document
+from docx.oxml.ns import qn
 from md_to_docx.template import Template
+from md_to_docx.mermaid import ConvertError
 from md_to_docx.renderer import DocxRenderer
-from md_to_docx.pandoc_json import inlines_to_text, ast_to_docx, parse_pandoc_table
+from md_to_docx.pandoc_json import inlines_to_text, ast_to_docx, parse_pandoc_table, blocks_to_text
 
 def test_inlines_to_text():
     inlines = [
@@ -235,7 +237,9 @@ def test_ast_to_docx_rich_callouts_preserve_formatting():
     assert "<w:i" in body_xml
     assert "مورد اول لیست" in cell_body.text
     assert "مورد دوم لیست" in cell_body.text
-    assert '{"active": true}' in cell_body.text
+    all_body_text = "".join(cell_body._tc.xpath(".//w:t/text()"))
+    assert '{"active": true}' in all_body_text
+    assert len(cell_body.tables) == 1, "Nested code block in callout must be a styled table"
 
 
 def test_ast_to_docx_strikeout_superscript_subscript_underline():
@@ -616,6 +620,28 @@ def test_ast_to_docx_sequential_inline_image_ordering(tmp_path):
     assert idx_pre < idx_draw < idx_post
 
 
+def test_ast_to_docx_line_block_renders_lines():
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "LineBlock",
+                "c": [
+                    [{"t": "Str", "c": "خط اول شعر"}],
+                    [{"t": "Str", "c": "خط دوم شعر"}],
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl)
+    ast_to_docx(ast_dict, renderer)
+    texts = [p.text for p in doc.paragraphs if p.text.strip()]
+    assert texts == ["خط اول شعر", "خط دوم شعر"]
+
+
 def test_ast_to_docx_raw_block_pagebreak():
     """F-12: Verifies that raw \\pagebreak directives produce actual page breaks."""
     ast_dict = {
@@ -750,6 +776,161 @@ def test_standalone_image_title_rendered_as_visible_caption(tmp_path):
     assert "عنوان واقعی زیر تصویر" in doc.paragraphs[1].text
     docPr_descr = doc.paragraphs[0]._p.xpath(".//wp:docPr/@descr")
     assert docPr_descr == ["توضیح alt"]
+
+
+def test_nested_code_block_inside_callout_has_shading_and_syntax_highlighting():
+    """R3-03 / R3-04: CodeBlock inside a callout must retain its shaded box, border, and syntax highlighting."""
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Div",
+                "c": [
+                    ["", ["note"], [["title", "نکتهٔ کدی"]]],
+                    [
+                        {
+                            "t": "CodeBlock",
+                            "c": [["", ["python"], []], "def hello():\n    return 42"],
+                        }
+                    ],
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl)
+    ast_to_docx(ast_dict, renderer)
+
+    # Top-level callout table
+    assert len(doc.tables) == 1
+    callout_tbl = doc.tables[0]
+    cell_body = callout_tbl.cell(1, 0)
+
+    # Must contain a nested table for the styled code block box
+    assert len(cell_body.tables) == 1, "Code block inside callout must be rendered as a shaded box table"
+    code_tbl = cell_body.tables[0]
+    assert "w:bidiVisual" not in code_tbl._tbl.xml
+    assert 'w:fill="F6F8FA"' in code_tbl._tbl.xml
+
+    # Must retain Pygments syntax highlighting colors
+    runs = [r for p in code_tbl.cell(0, 0).paragraphs for r in p.runs]
+    colors = set()
+    for r in runs:
+        rPr = r._r.find(qn("w:rPr"))
+        if rPr is not None:
+            c = rPr.find(qn("w:color"))
+            if c is not None and c.get(qn("w:val")):
+                colors.add(c.get(qn("w:val")))
+    assert "007020" in colors, f"Expected Python keyword color 007020 in nested code block, got {colors}"
+
+
+def test_definition_list_rtl_right_indent():
+    """R3-06 / RTL Quality: DefinitionList in RTL must use right_indent instead of left_indent."""
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "DefinitionList",
+                "c": [
+                    [
+                        [{"t": "Str", "c": "شناسه"}],
+                        [[{"t": "Para", "c": [{"t": "Str", "c": "کلید اصلی در پایگاه داده"}]}]]
+                    ]
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl)
+    ast_to_docx(ast_dict, renderer)
+
+    assert len(doc.paragraphs) == 2
+    p_def = doc.paragraphs[1]
+    assert p_def.paragraph_format.right_indent is not None, "RTL definition must set right_indent"
+    assert p_def.paragraph_format.right_indent > 0
+    assert p_def.paragraph_format.left_indent is None or p_def.paragraph_format.left_indent == 0, "RTL definition must not set left_indent"
+
+
+def test_blocks_to_text_includes_table_footer():
+    """R3-03: blocks_to_text must recursively extract text from table footer (tfoot) rows."""
+    blocks = [
+        {
+            "t": "Table",
+            "c": [
+                ["", [], []],
+                [None, []],
+                [],
+                ["", []],
+                [],
+                ["", [[["", [], []], [[None, [], 1, 1, [{"t": "Plain", "c": [{"t": "Str", "c": "جمع کل"}]}]]]]]],
+            ],
+        }
+    ]
+    extracted = blocks_to_text(blocks)
+    assert "جمع کل" in extracted, "blocks_to_text must include tfoot content"
+
+
+def test_dangerous_raw_html_raises_convert_error():
+    """R3-03 / Security: Dangerous raw HTML elements (<script>, <iframe>) must raise explicit ConvertError."""
+    tmpl = Template.load("purple_book")
+
+    # 1. RawBlock with <script>
+    ast_block = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [{"t": "RawBlock", "c": ["html", "<script>alert('xss')</script>"]}],
+    }
+    with pytest.raises(ConvertError) as exc_block:
+        ast_to_docx(ast_block, DocxRenderer(Document(), tmpl))
+    assert "dangerous" in str(exc_block.value).lower() or "unsupported" in str(exc_block.value).lower()
+
+    # 2. RawInline with <iframe>
+    ast_inline = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "Para",
+                "c": [{"t": "RawInline", "c": ["html", "<iframe src='evil.com'></iframe>"]}],
+            }
+        ],
+    }
+    with pytest.raises(ConvertError) as exc_inline:
+        ast_to_docx(ast_inline, DocxRenderer(Document(), tmpl))
+    assert "dangerous" in str(exc_inline.value).lower() or "unsupported" in str(exc_inline.value).lower()
+
+
+def test_ordered_list_persian_digits_in_rtl():
+    """R3-06 / RTL Quality: OrderedList in RTL Persian context must emit Persian numbers (۱.، ۲.)."""
+    ast_dict = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [
+            {
+                "t": "OrderedList",
+                "c": [
+                    [1, {"t": "Decimal"}, {"t": "Period"}],
+                    [
+                        [{"t": "Para", "c": [{"t": "Str", "c": "مرحله نخست"}]}],
+                        [{"t": "Para", "c": [{"t": "Str", "c": "مرحله دوم"}]}],
+                    ],
+                ],
+            }
+        ],
+    }
+    doc = Document()
+    tmpl = Template.load("purple_book")
+    renderer = DocxRenderer(doc, tmpl)
+    ast_to_docx(ast_dict, renderer)
+
+    assert len(doc.paragraphs) == 2
+    assert "۱." in doc.paragraphs[0].text, f"Expected Persian '۱.' in first item, got '{doc.paragraphs[0].text}'"
+    assert "۲." in doc.paragraphs[1].text, f"Expected Persian '۲.' in second item, got '{doc.paragraphs[1].text}'"
+
 
 
 

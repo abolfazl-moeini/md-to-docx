@@ -8,6 +8,7 @@ def test_load_template_by_name():
     assert tmpl.direction == "rtl"
     assert tmpl.fonts["body"] == "Vazirmatn"
     assert tmpl.fonts["heading"] == "Vazirmatn"
+    assert tmpl.fonts["latin"] == "Segoe UI"
     assert tmpl.fonts["code"] == "Courier New"
     assert tmpl.colors["primary"] == "6B2FA0"
     assert tmpl.colors["primary_dark"] == "4A156D"
@@ -170,4 +171,66 @@ def test_template_missing_referenced_custom_shell(tmp_path):
     with pytest.raises(TemplateValidationError) as exc_info:
         Template.load(tmp_path)
     assert "missing_shell.docx" in str(exc_info.value)
+
+
+def test_packaged_template_mirrors_project_template():
+    """Packaged wheel copy must stay in sync with the repo-root templates/ theme."""
+    import filecmp
+    from md_to_docx.template import PACKAGE_DIR, PROJECT_ROOT
+
+    project = PROJECT_ROOT / "templates" / "purple_book"
+    packaged = PACKAGE_DIR / "templates" / "purple_book"
+    assert project.is_dir()
+    assert packaged.is_dir()
+    for rel in (
+        "config.yaml",
+        "mermaid.css",
+        "mermaid.json",
+        "puppeteer.json",
+        "fonts/Vazirmatn-Regular.ttf",
+        "fonts/OFL.txt",
+    ):
+        left = project / rel
+        right = packaged / rel
+        assert left.is_file(), f"missing project template file: {rel}"
+        assert right.is_file(), f"missing packaged template file: {rel}"
+        assert filecmp.cmp(left, right, shallow=False), f"template drift: {rel}"
+
+
+def test_template_load_prefers_project_templates_over_package(tmp_path, monkeypatch):
+    """A checkout templates/ directory must win over the packaged copy."""
+    import md_to_docx.template as tmpl_mod
+    from md_to_docx.template import PROJECT_ROOT
+
+    override = tmp_path / "templates" / "purple_book"
+    override.mkdir(parents=True)
+    src = PROJECT_ROOT / "templates" / "purple_book" / "config.yaml"
+    text = src.read_text(encoding="utf-8").replace("name: purple_book", "name: purple_book_checkout")
+    (override / "config.yaml").write_text(text, encoding="utf-8")
+    for rel in ("mermaid.css", "mermaid.json", "puppeteer.json"):
+        (override / rel).write_text((PROJECT_ROOT / "templates" / "purple_book" / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    fonts = override / "fonts"
+    fonts.mkdir()
+    (fonts / "Vazirmatn-Regular.ttf").write_bytes(
+        (PROJECT_ROOT / "templates" / "purple_book" / "fonts" / "Vazirmatn-Regular.ttf").read_bytes()
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tmpl_mod, "PROJECT_ROOT", tmp_path)
+    tmpl = Template.load("purple_book")
+    assert tmpl.name == "purple_book_checkout"
+    assert tmpl.dir_path == override.resolve()
+
+
+def test_template_load_from_installed_package_dir(monkeypatch, tmp_path):
+    """R3-06 / Packaging: Template.load must find templates from PACKAGE_DIR / 'templates' without PROJECT_ROOT."""
+    import md_to_docx.template as tmpl_mod
+    monkeypatch.setattr(tmpl_mod, "PROJECT_ROOT", tmp_path / "nowhere")
+    monkeypatch.chdir(tmp_path)
+
+    tmpl = Template.load("purple_book")
+    assert tmpl.name == "purple_book"
+    assert (tmpl.dir_path / "config.yaml").exists()
+    assert (tmpl.dir_path / "fonts" / "Vazirmatn-Regular.ttf").exists()
+
 

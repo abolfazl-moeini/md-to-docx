@@ -32,6 +32,14 @@ def is_pure_latin(text: str) -> bool:
     return bool(LATIN_RE.search(text)) and not contains_persian(text)
 
 
+_PERSIAN_DIGITS_MAP = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def to_persian_digits(text: str) -> str:
+    """Converts ASCII Latin digits in the text to Persian digits."""
+    return text.translate(_PERSIAN_DIGITS_MAP)
+
+
 TOKEN_RE = re.compile(
     # Parenthesized Latin expressions like (Auth) or (Database Engine)
     r"(?P<paren_latin>\([ \t]*[a-zA-Z0-9_\.\-\/]+(?:[ \t]+[a-zA-Z0-9_\.\-\/]+)*[ \t]*\))"

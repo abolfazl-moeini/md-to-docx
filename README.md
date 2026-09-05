@@ -249,7 +249,7 @@ tests/fixtures/     Persian, English, and comprehensive Markdown fixtures
 - **Transactional Staging & Atomic Rollback**: Conversions stage all output files in an isolated temporary directory. If any failure occurs during diagram compilation, Pandoc parsing, AST rendering, or file publishing, the target DOCX and media directories are cleanly rolled back to their prior state, and staging files are purged.
 - **Maximum Input File Size**: 20 MB (`MAX_INPUT_SIZE_BYTES = 20 * 1024 * 1024`). Files exceeding this limit fail immediately with `ConvertError` to prevent memory exhaustion.
 - **Mermaid Compilation Timeout**: 60.0 seconds per diagram (`MERMAID_TIMEOUT_SECONDS = 60.0`).
-- **Mermaid Browser Renderer**: Prefers Puppeteer-managed Chrome for Testing over system Chrome.app, passing explicit `executablePath` and `--no-sandbox` flags.
+- **Mermaid Browser Renderer**: Prefers Puppeteer-managed Chrome for Testing over system Chrome.app, passing explicit `executablePath`, `--no-sandbox`, and a matching `headless` mode (`true` for full Chrome, `shell` for chrome-headless-shell). Launch failures retry the next discovered browser. Integration tests skip unless a live mmdc probe succeeds.
 - **Table Cell Spanning**: Multi-row (`rowspan > 1`) and multi-column (`colspan > 1`) cells are explicitly rejected with descriptive `ConvertError` indicating table row/column coordinates to prevent silent truncation.
 
 ## Limitations (v1)
@@ -261,4 +261,6 @@ tests/fixtures/     Persian, English, and comprehensive Markdown fixtures
 
 ## Fonts
 
-[Vazirmatn](https://github.com/rastikerdar/vazirmatn) is included under the [SIL Open Font License](templates/purple_book/fonts/OFL.txt).
+[Vazirmatn](https://github.com/rastikerdar/vazirmatn) is included under the [SIL Open Font License](templates/purple_book/fonts/OFL.txt) and is used for Persian / complex-script runs (`w:cs`). Latin runs use `fonts.latin` from the theme (default **Segoe UI**). Fonts are named in the DOCX, not embedded; machines without those families will substitute.
+
+The `purple_book` theme lives in [`templates/purple_book/`](templates/purple_book/) in this repo and is also shipped inside the Python package (`md_to_docx/templates/purple_book`) so `md2docx` works after `pip install` without a checkout.

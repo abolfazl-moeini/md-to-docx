@@ -34,6 +34,7 @@ def test_sample_input_fixture_locked():
     assert "> Login معمولاً هویت ورود در سطح Instance است." in content
     assert "| مفهوم | سطح معمول | نمونه |" in content
     assert "| Login | Instance | DOMAIN\\Niloofar |" in content
+    assert "CREATE LOGIN [DOMAIN\\Niloofar]" in content
 
 
 def test_diverse_fixtures_exist():
@@ -204,3 +205,105 @@ def test_mixed_docx_structure():
 
         # Check caption
         assert "شکل ۲-۱." in all_text
+
+
+def test_sample_input_docx_structure():
+    """R3-04: Verifies sample_input.docx structure on disk includes headings, callouts, and SQL code block."""
+    docx_file = FIXTURES_DIR / "sample_input.docx"
+    assert docx_file.exists(), "sample_input.docx must exist on disk"
+
+    with zipfile.ZipFile(docx_file, "r") as z:
+        doc_xml = z.read("word/document.xml")
+        tree = etree.fromstring(doc_xml)
+        all_text = "".join(tree.xpath("//w:t/text()", namespaces=NS))
+
+        # Check headings
+        assert "پایگاه‌های دادهٔ سیستمی SQL Server" in all_text
+        assert "نقش Database Engine" in all_text
+        assert "نقش SQL Server Agent" in all_text
+
+        # Check callouts
+        assert "نکتهٔ DBA" in all_text
+        assert "هشدار" in all_text
+
+        # Check table
+        assert "db_datareader" in all_text
+
+        # Check SQL code block exists with shaded box and text
+        code_blocks = tree.xpath("//w:tc[.//w:shd[@w:fill='F6F8FA']]", namespaces=NS)
+        assert len(code_blocks) >= 1, "sample_input.docx must contain at least 1 shaded code block"
+        assert "CREATE LOGIN" in all_text
+        assert "SalesDatabase" in all_text
+
+
+def test_all_ten_docx_fixtures_exist_and_valid_on_disk():
+    """R3-07: Verifies that all 10 DOCX fixture and example files exist on disk and are valid OOXML packages."""
+    project_root = Path(__file__).parent.parent
+    expected_files = [
+        project_root / "tests" / "fixtures" / "sample_input.docx",
+        project_root / "tests" / "fixtures" / "persian_technical_doc.docx",
+        project_root / "tests" / "fixtures" / "english_technical_doc.docx",
+        project_root / "tests" / "fixtures" / "mixed_doc.docx",
+        project_root / "tests" / "fixtures" / "rtl_quality.docx",
+        project_root / "tests" / "fixtures" / "comprehensive_markdown.docx",
+        project_root / "examples" / "sample_input.docx",
+        project_root / "examples" / "persian_technical_doc.docx",
+        project_root / "examples" / "english_technical_doc.docx",
+        project_root / "examples" / "mixed_doc.docx",
+    ]
+    assert len(expected_files) == 10
+
+    for docx_path in expected_files:
+        assert docx_path.is_file(), f"DOCX file '{docx_path.relative_to(project_root)}' must exist on disk"
+        assert docx_path.stat().st_size > 10_000, f"DOCX file '{docx_path.name}' too small ({docx_path.stat().st_size} bytes)"
+
+        with zipfile.ZipFile(docx_path, "r") as z:
+            namelist = z.namelist()
+            assert "word/document.xml" in namelist, f"Missing word/document.xml in {docx_path.name}"
+            assert "[Content_Types].xml" in namelist, f"Missing [Content_Types].xml in {docx_path.name}"
+            doc_xml = z.read("word/document.xml")
+            tree = etree.fromstring(doc_xml)
+            texts = tree.xpath("//w:t/text()", namespaces=NS)
+            assert len(texts) > 5, f"DOCX '{docx_path.name}' has insufficient text content"
+
+
+def test_rtl_quality_docx_on_disk_structure():
+    """R3-06: Verifies rtl_quality.docx on disk contains bidiVisual tables, right borders, and images."""
+    docx_file = FIXTURES_DIR / "rtl_quality.docx"
+    assert docx_file.exists(), "rtl_quality.docx must exist on disk"
+
+    with zipfile.ZipFile(docx_file, "r") as z:
+        doc_xml = z.read("word/document.xml")
+        tree = etree.fromstring(doc_xml)
+        all_text = "".join(tree.xpath("//w:t/text()", namespaces=NS))
+
+        assert "راهنمای جامع معماری سیستم" in all_text
+        assert "مدیریت نسخه‌ها و شناسه‌ها" in all_text
+
+        # Tables with bidiVisual
+        bidi_tables = tree.xpath("//w:tbl[.//w:bidiVisual]", namespaces=NS)
+        assert len(bidi_tables) >= 1, "rtl_quality.docx must contain RTL bidiVisual tables"
+
+        # Image drawing
+        drawings = tree.xpath(".//w:drawing", namespaces=NS)
+        assert len(drawings) >= 1, "rtl_quality.docx must contain at least 1 image drawing"
+
+
+def test_comprehensive_docx_on_disk_structure():
+    """R3-03: Verifies comprehensive_markdown.docx on disk contains headings, code blocks, tables, and images."""
+    docx_file = FIXTURES_DIR / "comprehensive_markdown.docx"
+    assert docx_file.exists(), "comprehensive_markdown.docx must exist on disk"
+
+    with zipfile.ZipFile(docx_file, "r") as z:
+        doc_xml = z.read("word/document.xml")
+        tree = etree.fromstring(doc_xml)
+        all_text = "".join(tree.xpath("//w:t/text()", namespaces=NS))
+
+        assert "معماری سرویس‌ها" in all_text
+        assert "لیست‌های تو در تو" in all_text
+        assert "Auth Gateway" in all_text
+
+        # Media files
+        media = [n for n in z.namelist() if n.startswith("word/media/")]
+        assert len(media) >= 2, f"Expected at least 2 media images, found {len(media)}"
+

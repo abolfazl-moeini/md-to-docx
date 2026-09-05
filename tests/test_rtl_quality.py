@@ -125,6 +125,7 @@ def test_rtl_quality_docx_structure(tmp_path):
 
     # 5. Verify image sizing and dimensions (R3-06)
     drawings = doc._body._element.xpath(".//w:drawing")
+    assert len(drawings) >= 1, "rtl_quality.docx must contain at least 1 image to verify sizing"
     for drawing in drawings:
         extents = drawing.xpath(".//wp:extent")
         for ext in extents:

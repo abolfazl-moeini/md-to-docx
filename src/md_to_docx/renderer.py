@@ -90,11 +90,12 @@ class DocxRenderer:
 
     def _setup_normal_style(self) -> None:
         body_font = self.template.fonts.get("body", "Vazirmatn")
+        latin_font = self.template.fonts.get("latin", "Segoe UI")
         style = self.doc.styles["Normal"]
         rPr = style.element.get_or_add_rPr()
         rFonts = rPr.get_or_add_rFonts()
-        rFonts.set(qn("w:ascii"), body_font)
-        rFonts.set(qn("w:hAnsi"), body_font)
+        rFonts.set(qn("w:ascii"), latin_font)
+        rFonts.set(qn("w:hAnsi"), latin_font)
         rFonts.set(qn("w:cs"), body_font)
         for tag in ("w:sz", "w:szCs"):
             el = rPr.find(qn(tag))
@@ -155,7 +156,7 @@ class DocxRenderer:
             return
         resolved_color = self._resolve_color(color_hex or self.template.colors.get("body", "2D2D2D"))
         cs_font = font_name or self.template.fonts.get("body", "Vazirmatn")
-        latin_font = font_name or self.template.fonts.get("latin", "Segoe UI")
+        latin_font = self.template.fonts.get("latin", "Segoe UI")
 
         if force_ltr:
             r = paragraph.add_run(text)
@@ -316,6 +317,7 @@ class DocxRenderer:
                 color_hex=on_primary,
                 bidi_lang=self.template.language_bidi,
                 latin_lang=self.template.language_latin,
+                cs_font_name=heading_font,
             )
             set_run_rtl(r0, is_rtl_heading)
 
@@ -331,17 +333,14 @@ class DocxRenderer:
             set_paragraph_align(p1, "start")
 
             title_color = self._resolve_color(self.template.colors.get("body", "2D2D2D"))
-            for chunk, _ in split_bidi_runs(info.title):
-                r1 = p1.add_run(chunk)
-                set_run_cs_font(
-                    r1,
-                    font_name=heading_font,
-                    size_pt=font_size,
-                    bold=True,
-                    color_hex=title_color,
-                    bidi_lang=self.template.language_bidi,
-                    latin_lang=self.template.language_latin,
-                )
+            self.append_text(
+                p1,
+                info.title,
+                font_size_pt=font_size,
+                bold=True,
+                color_hex=title_color,
+                font_name=heading_font,
+            )
 
             # Spacing after heading table
             after_p = self.doc.add_paragraph()
@@ -405,17 +404,14 @@ class DocxRenderer:
         self._clear_paragraph(p_hdr)
         set_paragraph_bidi(p_hdr, bidi=is_rtl_callout)
         set_paragraph_align(p_hdr, "start")
-        for chunk, _ in split_bidi_runs(display_title):
-            r = p_hdr.add_run(chunk)
-            set_run_cs_font(
-                r,
-                font_name=self.template.fonts.get("heading", "Vazirmatn"),
-                size_pt=11.0,
-                bold=True,
-                color_hex=hdr_fg,
-                bidi_lang=self.template.language_bidi,
-                latin_lang=self.template.language_latin,
-            )
+        self.append_text(
+            p_hdr,
+            display_title,
+            font_size_pt=11.0,
+            bold=True,
+            color_hex=hdr_fg,
+            font_name=self.template.fonts.get("heading", "Vazirmatn"),
+        )
 
         # Body Row
         cell_body: _Cell = tbl.cell(1, 0)
@@ -434,11 +430,16 @@ class DocxRenderer:
                 self.render_paragraph(item, align="both", font_size_pt=10.5, target_p=target_p)
                 rendered_count += 1
             elif isinstance(item, dict) and block_renderer:
-                # If first block is a Table, python-docx adds the table after p_first.
-                # Remove leading empty paragraph so the table aligns cleanly to cell top.
-                is_first_table = (rendered_count == 0 and item.get("t") == "Table" and p_first.text == "")
+                # If first block is a Table or CodeBlock, python-docx adds the table after p_first.
+                # Remove leading empty paragraph so the element aligns cleanly to cell top.
+                is_first_table_or_code = (
+                    rendered_count == 0
+                    and item.get("t") in ("Table", "CodeBlock")
+                    and p_first.text == ""
+                    and len(p_first.runs) == 0
+                )
                 block_renderer(item, cell_body, self, is_first=(rendered_count == 0))
-                if is_first_table and p_first._p.getparent() is not None:
+                if is_first_table_or_code and p_first._p.getparent() is not None:
                     cell_body._tc.remove(p_first._p)
                 rendered_count += 1
             else:
@@ -507,7 +508,10 @@ class DocxRenderer:
                 is_rtl_d = contains_persian(dtext) if self.template.direction == "rtl" else False
                 set_paragraph_bidi(p_def, bidi=is_rtl_d)
                 set_paragraph_align(p_def, "both")
-                p_def.paragraph_format.left_indent = Inches(0.3)
+                if is_rtl_d:
+                    p_def.paragraph_format.right_indent = Inches(0.3)
+                else:
+                    p_def.paragraph_format.left_indent = Inches(0.3)
                 p_def.paragraph_format.space_after = Pt(4)
                 self.append_text(p_def, dtext, font_size_pt=10.5)
 
@@ -587,17 +591,14 @@ class DocxRenderer:
                 p.text = ""
                 set_paragraph_bidi(p, bidi=is_rtl_table)
                 set_paragraph_align(p, "start")
-                for chunk, _ in split_bidi_runs(h_text):
-                    r = p.add_run(chunk)
-                    set_run_cs_font(
-                        r,
-                        font_name=self.template.fonts.get("heading", "Vazirmatn"),
-                        size_pt=10.5,
-                        bold=True,
-                        color_hex=on_primary,
-                        bidi_lang=self.template.language_bidi,
-                        latin_lang=self.template.language_latin,
-                    )
+                self.append_text(
+                    p,
+                    h_text,
+                    font_size_pt=10.5,
+                    bold=True,
+                    color_hex=on_primary,
+                    font_name=self.template.fonts.get("heading", "Vazirmatn"),
+                )
 
         # Body Rows
         border_spec = {"val": "single", "sz": 4, "color": "D8D8D8", "space": 0}
@@ -614,17 +615,14 @@ class DocxRenderer:
                 p.text = ""
                 set_paragraph_bidi(p, bidi=is_rtl_table)
                 set_paragraph_align(p, "start")
-                for chunk, _ in split_bidi_runs(cell_text):
-                    r = p.add_run(chunk)
-                    set_run_cs_font(
-                        r,
-                        font_name=self.template.fonts.get("body", "Vazirmatn"),
-                        size_pt=10.0,
-                        bold=False,
-                        color_hex=self.template.colors.get("body", "2D2D2D"),
-                        bidi_lang=self.template.language_bidi,
-                        latin_lang=self.template.language_latin,
-                    )
+                self.append_text(
+                    p,
+                    cell_text,
+                    font_size_pt=10.0,
+                    bold=False,
+                    color_hex=self.template.colors.get("body", "2D2D2D"),
+                    font_name=self.template.fonts.get("body", "Vazirmatn"),
+                )
 
         # Prevent rows from splitting across page breaks (F-12)
         for row in tbl.rows:
@@ -724,18 +722,15 @@ class DocxRenderer:
             p_cap.paragraph_format.space_after = Pt(10)
 
             cap_color = self._resolve_color(self.template.colors.get("caption", "5A5A5A"))
-            for chunk, _ in split_bidi_runs(caption):
-                r = p_cap.add_run(chunk)
-                set_run_cs_font(
-                    r,
-                    font_name=self.template.fonts.get("body", "Vazirmatn"),
-                    size_pt=9.5,
-                    bold=False,
-                    italic=False,
-                    color_hex=cap_color,
-                    bidi_lang=self.template.language_bidi,
-                    latin_lang=self.template.language_latin,
-                )
+            self.append_text(
+                p_cap,
+                caption,
+                font_size_pt=9.5,
+                bold=False,
+                italic=False,
+                color_hex=cap_color,
+                font_name=self.template.fonts.get("body", "Vazirmatn"),
+            )
 
         if alt_text:
             for docPr in p_img._p.xpath(".//wp:docPr"):
@@ -873,13 +868,17 @@ class DocxRenderer:
         col_width = Inches(self.content_width_in)
         tbl.columns[0].width = col_width
 
-        # Explicitly set table-level width in dxa and center alignment
+        # Explicitly set table-level width in dxa or pct and center alignment
         tbl_w = tblPr.find(qn("w:tblW"))
         if tbl_w is None:
             tbl_w = OxmlElement("w:tblW")
             tblPr.append(tbl_w)
-        tbl_w.set(qn("w:type"), "dxa")
-        tbl_w.set(qn("w:w"), str(int(round(self.content_width_in * 1440))))
+        if container is not None:
+            tbl_w.set(qn("w:type"), "pct")
+            tbl_w.set(qn("w:w"), "5000")  # 5000 = 100% of cell in OOXML
+        else:
+            tbl_w.set(qn("w:type"), "dxa")
+            tbl_w.set(qn("w:w"), str(int(round(self.content_width_in * 1440))))
 
         tbl_jc = tblPr.find(qn("w:jc"))
         if tbl_jc is None:
@@ -888,7 +887,8 @@ class DocxRenderer:
         tbl_jc.set(qn("w:val"), "center")
 
         cell: _Cell = tbl.cell(0, 0)
-        cell.width = col_width
+        if container is None:
+            cell.width = col_width
         set_cell_shading(cell, bg_color)
         set_cell_margins(cell, top_pt=6, bottom_pt=6, left_pt=8, right_pt=8)
 

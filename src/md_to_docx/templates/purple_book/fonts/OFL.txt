@@ -1,0 +1,2 @@
+Vazirmatn is licensed under the SIL Open Font License, Version 1.1.
+See https://github.com/rastikerdar/vazirmatn

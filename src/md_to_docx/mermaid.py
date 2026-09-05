@@ -119,13 +119,12 @@ def probe_mermaid_renderer(
     if mmdc_cmd and not shutil.which(mmdc_cmd[0]) and not Path(mmdc_cmd[0]).is_file():
         return (False, f"Launch error: Mermaid CLI command '{mmdc_cmd[0]}' not found.")
 
-    target_browser = browser_bin or _find_browser_executable()
-    if not target_browser:
+    if browser_bin:
+        classified = _classify_browser_binary(browser_bin)
+        if classified is not None:
+            return (False, classified)
+    elif not _iter_browser_candidates():
         return (False, "Launch error: No Chromium/Chrome browser executable found.")
-
-    classified = _classify_browser_binary(target_browser)
-    if classified is not None:
-        return (False, classified)
 
     tmpl = template or Template.load("purple_book")
     with tempfile.TemporaryDirectory(prefix="mermaid_probe_") as probe_dir:
@@ -136,7 +135,7 @@ def probe_mermaid_renderer(
                 test_out,
                 tmpl,
                 timeout=timeout,
-                browser_bin=target_browser,
+                browser_bin=browser_bin,
             )
             if test_out.exists() and test_out.stat().st_size > 0:
                 return (True, None)
@@ -360,10 +359,23 @@ def _find_mmdc_cmd() -> List[str]:
     return ["mmdc"]
 
 
+def _headless_mode_for_browser(browser_bin: Optional[str]):
+    """mermaid-cli defaults to headless: 'shell' (chrome-headless-shell). Full Chrome needs new headless."""
+    if browser_bin and Path(browser_bin).name in _BROWSER_FALLBACK_NAMES:
+        return "shell"
+    return True
+
+
 def _get_puppeteer_config_path(template: Template, work_dir: Path, browser_bin: Optional[str] = None) -> Path:
     """Writes a runtime puppeteer config that includes --no-sandbox flags and explicit executablePath."""
     cfg: dict = {
-        "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+        "args": [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+        ],
+        "headless": _headless_mode_for_browser(browser_bin),
     }
     if browser_bin:
         cfg["executablePath"] = str(browser_bin)
@@ -376,10 +388,11 @@ def _get_puppeteer_config_path(template: Template, work_dir: Path, browser_bin: 
         if isinstance(existing, dict):
             user_args = list(existing.get("args") or [])
             merged = dict(existing)
-            for flag in ("--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"):
+            for flag in ("--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"):
                 if flag not in user_args:
                     user_args.append(flag)
             merged["args"] = user_args
+            merged["headless"] = _headless_mode_for_browser(browser_bin)
             if browser_bin:
                 merged["executablePath"] = str(browser_bin)
             cfg = merged
@@ -390,17 +403,25 @@ def _get_puppeteer_config_path(template: Template, work_dir: Path, browser_bin: 
 
 
 def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]:
-    """Builds CSS with an absolute @font-face so Chromium can load Vazirmatn."""
-    font_file = template.dir_path / "fonts" / "Vazirmatn-Regular.ttf"
+    """Builds CSS with an absolute @font-face so Chromium can load the configured font."""
+    body_font = template.fonts.get("body", "Vazirmatn")
+    font_file = None
+    font_rel = template.font_files.get(body_font)
+    if font_rel:
+        font_file = template.dir_path / font_rel
+    if not font_file or not font_file.exists():
+        cand = template.dir_path / "fonts" / f"{body_font}-Regular.ttf"
+        font_file = cand if cand.exists() else (template.dir_path / "fonts" / "Vazirmatn-Regular.ttf")
+
     base_css = ""
     if template.mermaid_css_path and template.mermaid_css_path.exists():
         base_css = template.mermaid_css_path.read_text(encoding="utf-8")
 
-    if font_file.exists():
+    if font_file and font_file.exists():
         font_url = font_file.resolve().as_uri()
         font_face = (
             "@font-face {\n"
-            "  font-family: 'Vazirmatn';\n"
+            f"  font-family: '{body_font}';\n"
             f"  src: url('{font_url}') format('truetype');\n"
             "  font-weight: normal;\n"
             "  font-style: normal;\n"
@@ -417,7 +438,11 @@ def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]
                     skip = False
                 continue
             stripped.append(line)
-        css_text = font_face + "\n".join(stripped).strip() + "\n"
+        css_text = (
+            font_face
+            + "\n".join(stripped).strip()
+            + f"\nbody, svg, text, .node, .edgeLabel, .label {{ font-family: '{body_font}', Tahoma, sans-serif !important; }}\n"
+        )
         out = work_dir / "mermaid-runtime.css"
         out.write_text(css_text, encoding="utf-8")
         return out
@@ -427,21 +452,33 @@ def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]
     return None
 
 
-def render_mermaid_to_png(
+_LAUNCH_ERROR_HINTS = (
+    "failed to launch",
+    "browser process",
+    "sandbox",
+    "could not find browser",
+    "executable doesn't exist",
+    "executable does not exist",
+    "chrome not found",
+    "target closed",
+    "econnrefused",
+)
+
+
+def _is_browser_launch_error(message: str) -> bool:
+    msg = message.lower()
+    return any(hint in msg for hint in _LAUNCH_ERROR_HINTS)
+
+
+def _run_mmdc(
     mmd_code: str,
     output_path: Path,
     template: Template,
-    timeout: float = MERMAID_TIMEOUT_SECONDS,
-    browser_bin: Optional[str] = None,
+    timeout: float,
+    browser_bin: Optional[str],
 ) -> Path:
-    """
-    Renders Mermaid code into a PNG image using mermaid-cli (mmdc).
-    Fails explicitly with ConvertError if compilation fails, times out, or produces an empty file.
-    """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    """Single mmdc invocation against one browser binary."""
     mmdc_cmd = _find_mmdc_cmd()
-    target_browser = browser_bin or _find_browser_executable()
-
     with tempfile.TemporaryDirectory(prefix="mmdc_work_") as work:
         work_dir = Path(work)
         temp_mmd = work_dir / "diagram.mmd"
@@ -464,12 +501,12 @@ def render_mermaid_to_png(
         if css_path:
             cmd.extend(["-C", str(css_path)])
 
-        puppeteer_cfg = _get_puppeteer_config_path(template, work_dir, browser_bin=target_browser)
+        puppeteer_cfg = _get_puppeteer_config_path(template, work_dir, browser_bin=browser_bin)
         cmd.extend(["-p", str(puppeteer_cfg)])
 
         env = dict(os.environ)
-        if target_browser:
-            env["PUPPETEER_EXECUTABLE_PATH"] = target_browser
+        if browser_bin:
+            env["PUPPETEER_EXECUTABLE_PATH"] = browser_bin
 
         try:
             proc = subprocess.run(
@@ -490,7 +527,7 @@ def render_mermaid_to_png(
 
     if proc.returncode != 0:
         err_msg = proc.stderr.strip() or proc.stdout.strip()
-        browser_info = target_browser if target_browser else "None found"
+        browser_info = browser_bin if browser_bin else "None found"
         raise ConvertError(
             f"Mermaid compilation failed with exit code {proc.returncode}:\n"
             f"{err_msg}\n"
@@ -506,6 +543,38 @@ def render_mermaid_to_png(
         raise ConvertError("Mermaid compilation produced empty or missing image file.")
 
     return output_path
+
+
+def render_mermaid_to_png(
+    mmd_code: str,
+    output_path: Path,
+    template: Template,
+    timeout: float = MERMAID_TIMEOUT_SECONDS,
+    browser_bin: Optional[str] = None,
+) -> Path:
+    """
+    Renders Mermaid code into a PNG image using mermaid-cli (mmdc).
+    Fails explicitly with ConvertError if compilation fails, times out, or produces an empty file.
+    When browser_bin is omitted, launch/sandbox failures retry the next discovered browser.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if browser_bin:
+        candidates: List[Optional[str]] = [browser_bin]
+    else:
+        found = _iter_browser_candidates()
+        candidates = found if found else [None]
+
+    last_error: Optional[ConvertError] = None
+    for candidate in candidates:
+        try:
+            return _run_mmdc(mmd_code, output_path, template, timeout, candidate)
+        except ConvertError as e:
+            last_error = e
+            if browser_bin or not _is_browser_launch_error(str(e)):
+                raise
+    if last_error:
+        raise last_error
+    raise ConvertError("Mermaid compilation failed: no browser candidate succeeded.")
 
 
 def process_mermaid_blocks(

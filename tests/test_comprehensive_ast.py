@@ -205,11 +205,8 @@ def test_comprehensive_markdown_fixture_end_to_end(tmp_path):
 
     # Inspect generated OOXML
     doc = Document(str(docx_dest))
-    all_text = (
-        " ".join(p.text for p in doc.paragraphs)
-        + " "
-        + " ".join(cell.text for tbl in doc.tables for r in tbl.rows for cell in r.cells)
-    )
+    all_text = "".join(doc._body._element.xpath(".//w:t/text()"))
+
 
     # 1. Headings (levels 1-6)
     assert "معماری سرویس‌ها" in all_text
@@ -253,3 +250,7 @@ def test_comprehensive_markdown_fixture_end_to_end(tmp_path):
     with zipfile.ZipFile(docx_dest, "r") as z:
         media_files = [n for n in z.namelist() if n.startswith("word/media/")]
         assert len(media_files) >= 2, f"Expected at least 2 images, found {len(media_files)}"
+
+    # 10. Callout with nested code block
+    assert "نکتهٔ اجرایی در کادر" in all_text
+    assert "isServiceHealthy" in all_text

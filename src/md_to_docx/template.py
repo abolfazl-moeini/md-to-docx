@@ -44,6 +44,7 @@ class Template:
         self.language_bidi: str = raw_config.get("language_bidi", "fa-IR")
         self.language_latin: str = raw_config.get("language_latin", "en-US")
         self.fonts: Dict[str, str] = raw_config.get("fonts", {})
+        self.font_files: Dict[str, str] = raw_config.get("font_files", {})
         self.page: Dict[str, Any] = raw_config.get("page", {
             "size": "A4",
             "margin_cm": {"top": 2.0, "bottom": 2.0, "left": 2.0, "right": 2.0}
@@ -280,10 +281,12 @@ class Template:
         if target.is_dir() and (target / "config.yaml").exists():
             return target
 
-        # Check default template locations
+        # Prefer a checkout/cwd theme so local edits to templates/ take effect;
+        # fall back to the copy shipped inside the installed package (wheels).
         candidate_roots = [
             Path("templates"),
             PROJECT_ROOT / "templates",
+            PACKAGE_DIR / "templates",
         ]
         for root in candidate_roots:
             candidate = (root / name_or_path).resolve()
@@ -313,6 +316,7 @@ class Template:
         candidate_roots = [
             Path("templates"),
             PROJECT_ROOT / "templates",
+            PACKAGE_DIR / "templates",
         ]
         for root in candidate_roots:
             if root.is_dir():
