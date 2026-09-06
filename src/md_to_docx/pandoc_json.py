@@ -82,7 +82,7 @@ def emit_hyperlink(
 
     hyperlink = OxmlElement("w:hyperlink")
     if target.startswith("#"):
-        hyperlink.set(qn("w:anchor"), target.lstrip("#"))
+        hyperlink.set(qn("w:anchor"), renderer.bookmark_name(target.lstrip("#")))
     else:
         r_id = paragraph.part.relate_to(target, RT.HYPERLINK, is_external=True)
         hyperlink.set(qn("r:id"), r_id)
@@ -614,16 +614,11 @@ def render_ast_table(
     if is_rtl_table and renderer.template.tables.get("bidi_visual", True):
         set_table_bidi_visual(tbl)
 
-    total_dxa = int(round(renderer.content_width_in * 1440))
+    total_dxa = int(round(renderer.available_width_in * 1440))
     base_col_dxa = total_dxa // max(1, num_cols)
     widths_dxa = [base_col_dxa] * num_cols
     widths_dxa[-1] += total_dxa - sum(widths_dxa)
     set_table_column_widths(tbl, widths_dxa)
-
-    for row in tbl.rows:
-        r_trPr = row._tr.get_or_add_trPr()
-        if r_trPr.find(qn("w:cantSplit")) is None:
-            r_trPr.append(OxmlElement("w:cantSplit"))
 
     tbl_cfg = renderer.template.tables or {}
     primary_color = renderer._resolve_color(tbl_cfg.get("header_bg", "primary"))
@@ -637,6 +632,8 @@ def render_ast_table(
         hdr_trPr = tbl.rows[h_idx]._tr.get_or_add_trPr()
         if hdr_trPr.find(qn("w:tblHeader")) is None:
             hdr_trPr.append(OxmlElement("w:tblHeader"))
+        if hdr_trPr.find(qn("w:cantSplit")) is None:
+            hdr_trPr.append(OxmlElement("w:cantSplit"))
         row_cells = head_row[1] if isinstance(head_row, list) and len(head_row) > 1 and isinstance(head_row[1], list) else []
         for c_idx in range(num_cols):
             cell = tbl.cell(h_idx, c_idx)
@@ -646,8 +643,11 @@ def render_ast_table(
             col_align = align_spec[c_idx] if c_idx < len(align_spec) else "default"
             cell_blocks = row_cells[c_idx][4] if c_idx < len(row_cells) and len(row_cells[c_idx]) > 4 and isinstance(row_cells[c_idx][4], list) else []
             if cell_blocks:
-                for b_i, cb in enumerate(cell_blocks):
-                    render_block(cb, renderer, container=cell, path=f"{path}.thead[r{h_idx}c{c_idx}][{b_i}]", default_align=col_align, is_header=True)
+                # Grid width includes the 6pt left/right cell padding set above.
+                cell_width_in = (widths_dxa[c_idx] / 1440) - (12 / 72)
+                with renderer.width_limit(cell_width_in):
+                    for b_i, cb in enumerate(cell_blocks):
+                        render_block(cb, renderer, container=cell, path=f"{path}.thead[r{h_idx}c{c_idx}][{b_i}]", default_align=col_align, is_header=True)
             else:
                 p = cell.paragraphs[0]
                 p.text = ""
@@ -664,8 +664,11 @@ def render_ast_table(
             col_align = align_spec[c_idx] if c_idx < len(align_spec) else "default"
             cell_blocks = row_cells[c_idx][4] if c_idx < len(row_cells) and len(row_cells[c_idx]) > 4 and isinstance(row_cells[c_idx][4], list) else []
             if cell_blocks:
-                for b_i, cb in enumerate(cell_blocks):
-                    render_block(cb, renderer, container=cell, path=f"{path}.tbody[r{b_idx}c{c_idx}][{b_i}]", default_align=col_align)
+                # Grid width includes the 6pt left/right cell padding set above.
+                cell_width_in = (widths_dxa[c_idx] / 1440) - (12 / 72)
+                with renderer.width_limit(cell_width_in):
+                    for b_i, cb in enumerate(cell_blocks):
+                        render_block(cb, renderer, container=cell, path=f"{path}.tbody[r{b_idx}c{c_idx}][{b_i}]", default_align=col_align)
             else:
                 p = cell.paragraphs[0]
                 p.text = ""
@@ -720,9 +723,9 @@ def render_block(
         attr = c[1] if isinstance(c, list) and len(c) > 1 else []
         heading_id = attr[0] if isinstance(attr, list) and attr else ""
         if container is None:
-            renderer.render_heading(info)
+            heading_block = renderer.render_heading(info)
             if heading_id:
-                renderer.add_bookmark(heading_id)
+                renderer.add_bookmark(heading_id, block=heading_block)
         else:
             p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
             is_rtl = contains_persian(text) if renderer.template.direction == "rtl" else False
@@ -772,6 +775,22 @@ def render_block(
             )
 
     elif t in ("Para", "Plain"):
+        # Pandoc represents display math as a Math inline inside its own Para.
+        # m:oMathPara is block-level OOXML, so emit it directly under w:body/w:tc
+        # instead of nesting it inside the paragraph created for ordinary inlines.
+        if (
+            isinstance(c, list)
+            and len(c) == 1
+            and isinstance(c[0], dict)
+            and c[0].get("t") == "Math"
+        ):
+            math_c = c[0].get("c")
+            math_kind = math_c[0].get("t") if isinstance(math_c, list) and math_c and isinstance(math_c[0], dict) else "InlineMath"
+            if math_kind == "DisplayMath":
+                math_text = math_c[1] if isinstance(math_c, list) and len(math_c) > 1 else ""
+                renderer.render_display_omml(str(math_text), container=container)
+                return
+
         images = [inl for inl in c if isinstance(inl, dict) and inl.get("t") == "Image"]
         non_spaces = [
             inl for inl in c
@@ -1066,4 +1085,3 @@ def ast_to_docx(ast_dict: Dict[str, Any], renderer: DocxRenderer) -> Document:
     for idx, block in enumerate(blocks):
         render_block(block, renderer, container=None, path=f"root.blocks[{idx}]")
     return renderer.doc
-

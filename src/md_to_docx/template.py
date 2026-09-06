@@ -198,7 +198,7 @@ class Template:
                 raise TemplateValidationError("Field 'headings.badge' must be a boolean")
             if "extract_number" in headings and not isinstance(headings["extract_number"], bool):
                 raise TemplateValidationError("Field 'headings.extract_number' must be a boolean")
-            for h in ("h1", "h2", "h3"):
+            for h in ("h1", "h2", "h3", "h4", "h5", "h6"):
                 if h in headings and isinstance(headings[h], dict):
                     if "size_pt" in headings[h]:
                         headings[h]["size_pt"] = require_number(headings[h]["size_pt"], f"headings.{h}.size_pt")
@@ -232,9 +232,9 @@ class Template:
             if not isinstance(quotes, dict):
                 raise TemplateValidationError("Field 'quotes' must be a mapping")
             if "border_pt" in quotes:
-                val = quotes["border_pt"]
-                if not isinstance(val, (int, float)) or val <= 0:
-                    raise TemplateValidationError(f"Field 'quotes.border_pt' must be a positive number, got '{val}'")
+                quotes["border_pt"] = require_number(quotes["border_pt"], "quotes.border_pt")
+            if "border_sz" in quotes:
+                quotes["border_sz"] = require_number(quotes["border_sz"], "quotes.border_sz", allow_zero=True)
             if "border_side" in quotes:
                 bs = quotes["border_side"]
                 valid_sides = ("physical_right", "physical_left", "start", "end", "left", "right")
@@ -270,13 +270,11 @@ class Template:
                 raise TemplateValidationError("Field 'code_block' must be a mapping")
             for cb_num in ("font_size_pt", "line_spacing"):
                 if cb_num in code_block:
-                    val = code_block[cb_num]
-                    if not isinstance(val, (int, float)) or val <= 0:
-                        raise TemplateValidationError(f"Field 'code_block.{cb_num}' must be a positive number, got '{val}'")
+                    code_block[cb_num] = require_number(code_block[cb_num], f"code_block.{cb_num}")
             if "border_sz" in code_block:
-                val = code_block["border_sz"]
-                if not isinstance(val, (int, float)) or val < 0:
-                    raise TemplateValidationError(f"Field 'code_block.border_sz' must be non-negative, got '{val}'")
+                code_block["border_sz"] = require_number(
+                    code_block["border_sz"], "code_block.border_sz", allow_zero=True
+                )
             for cb_col in ("bg", "border_color", "color"):
                 if cb_col in code_block:
                     cval = str(code_block[cb_col])
@@ -290,13 +288,9 @@ class Template:
             if not isinstance(mermaid, dict):
                 raise TemplateValidationError("Field 'mermaid' must be a mapping")
             if "scale" in mermaid:
-                sc = mermaid["scale"]
-                if not isinstance(sc, (int, float)) or sc <= 0:
-                    raise TemplateValidationError(f"Field 'mermaid.scale' must be a positive number, got '{sc}'")
+                mermaid["scale"] = require_number(mermaid["scale"], "mermaid.scale")
             if "max_width_in" in mermaid:
-                mw = mermaid["max_width_in"]
-                if not isinstance(mw, (int, float)) or mw <= 0:
-                    raise TemplateValidationError(f"Field 'mermaid.max_width_in' must be a positive number, got '{mw}'")
+                mermaid["max_width_in"] = require_number(mermaid["max_width_in"], "mermaid.max_width_in")
             for ref_file, field in (
                 ("theme_file", "mermaid.theme_file"),
                 ("css_file", "mermaid.css_file"),

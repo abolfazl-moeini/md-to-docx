@@ -166,6 +166,29 @@ def test_fin12_unknown_field_rejected(tmp_path):
         Template.load(tmpl_dir)
 
 
+@pytest.mark.parametrize(
+    ("section", "value", "field"),
+    [
+        ("headings", {"h4": {"size_pt": True}}, "headings.h4.size_pt"),
+        ("quotes", {"border_pt": True}, "quotes.border_pt"),
+        ("code_block", {"font_size_pt": True}, "code_block.font_size_pt"),
+        ("code_block", {"border_sz": True}, "code_block.border_sz"),
+        ("mermaid", {"scale": True}, "mermaid.scale"),
+        ("mermaid", {"max_width_in": True}, "mermaid.max_width_in"),
+    ],
+)
+def test_fin12_rejects_boolean_values_for_all_numeric_template_fields(tmp_path, section, value, field):
+    tmpl_dir = tmp_path / "tmpl"
+    tmpl_dir.mkdir()
+    (tmpl_dir / "config.yaml").write_text(
+        _minimal_template_yaml(**{section: value}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TemplateValidationError, match=field):
+        Template.load(tmpl_dir)
+
+
 def test_fin05_explicit_width_and_tall_image_capped(tmp_path):
     img = tmp_path / "tall.png"
     _write_png(img, 100, 1600)
@@ -182,11 +205,49 @@ def test_fin05_explicit_width_and_tall_image_capped(tmp_path):
     assert cy < 12_000_000
 
 
+def test_fin05_image_in_a_table_cell_uses_the_cell_width(tmp_path):
+    img = tmp_path / "wide.png"
+    _write_png(img, 1600, 400)
+    in_file = tmp_path / "doc.md"
+    in_file.write_text(
+        "| تصویر | متن |\n| --- | --- |\n| ![alt](wide.png) | توضیح |\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.docx"
+    convert_markdown_to_docx(in_file, out)
+    doc = Document(str(out))
+    image_width_emu = int(doc._body._element.xpath(".//wp:extent")[0].get("cx"))
+    outer_table_width_emu = int(doc.tables[0]._tbl.tblGrid.gridCol_lst[0].get(qn("w:w"))) * 635
+
+    # This is a two-column table, so the image needs to fit inside one cell,
+    # including its cell padding, instead of using the full page width.
+    assert image_width_emu < outer_table_width_emu
+
+
+def test_fin11_only_table_header_rows_are_prevented_from_splitting(tmp_path):
+    in_file = tmp_path / "doc.md"
+    in_file.write_text(
+        "| عنوان |\n| --- |\n| " + ("متن بلند " * 200) + " |\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.docx"
+    convert_markdown_to_docx(in_file, out)
+    table = Document(str(out)).tables[0]
+    assert "w:tblHeader" in table.rows[0]._tr.xml
+    assert "w:cantSplit" in table.rows[0]._tr.xml
+    assert "w:cantSplit" not in table.rows[1]._tr.xml
+
+
 def test_fin06_admonition_inside_code_fence_unchanged():
     md = "```text\n::: note Literal\n```\n"
     out = preprocess_admonitions(md)
     assert "::: note Literal" in out
     assert '{.note' not in out
+
+
+def test_fin06_code_fence_with_a_spaced_info_string_is_preserved():
+    md = "``` text\n::: note Literal\n```\n"
+    assert preprocess_admonitions(md) == md
 
 
 def test_fin06_mermaid_inside_outer_fence_not_extracted():
@@ -216,6 +277,26 @@ def test_fin07_hyperlink_and_quotes(tmp_path):
     assert "«" in joined or "“" in joined or '"' in joined
 
 
+def test_fin07_internal_link_targets_bookmark_on_numbered_heading(tmp_path):
+    in_file = tmp_path / "doc.md"
+    in_file.write_text(
+        "[رفتن به بخش](#target-section)\n\n# 1. عنوان {#target-section}\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.docx"
+    convert_markdown_to_docx(in_file, out)
+
+    body = Document(str(out))._body._element
+    hyperlink = body.xpath(".//w:hyperlink")[0]
+    bookmark = body.xpath(".//w:bookmarkStart")[0]
+    assert hyperlink.get(qn("w:anchor")) == bookmark.get(qn("w:name"))
+    # A numbered heading is a two-cell table followed by a spacer paragraph. The
+    # bookmark must be in the heading title, not on that empty spacer.
+    heading_paragraph = bookmark.getparent()
+    assert heading_paragraph.tag == qn("w:p")
+    assert "عنوان" in "".join(heading_paragraph.itertext())
+
+
 def test_fin08_math_omml_and_footnote_part(tmp_path):
     in_file = tmp_path / "doc.md"
     in_file.write_text("Half is $\\frac{1}{2}$. Note.[^1]\n\n[^1]: پاورقی فارسی.\n", encoding="utf-8")
@@ -229,6 +310,17 @@ def test_fin08_math_omml_and_footnote_part(tmp_path):
         assert "word/footnotes.xml" in names
         fn = z.read("word/footnotes.xml").decode("utf-8")
         assert "پاورقی" in fn
+
+
+def test_fin08_display_math_is_a_block_level_omml_element(tmp_path):
+    in_file = tmp_path / "doc.md"
+    in_file.write_text("$$\\frac{1}{2}$$\n", encoding="utf-8")
+    out = tmp_path / "out.docx"
+    convert_markdown_to_docx(in_file, out)
+
+    body = Document(str(out))._body._element
+    assert body.xpath("./m:oMathPara")
+    assert not body.xpath(".//w:p/m:oMathPara")
 
 
 def test_fin09_code_preserves_blank_lines(tmp_path):

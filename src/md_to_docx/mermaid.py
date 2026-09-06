@@ -25,8 +25,10 @@ class MermaidSyntaxError(ConvertError):
 
 
 CAPTION_RE = re.compile(r"^(?:شکل|Figure|Fig\.)\s+.*", re.IGNORECASE)
-MERMAID_FENCE_START = re.compile(r"^(?P<fence>`{3,}|~{3,})mermaid[ \t]*$")
-FENCE_LINE = re.compile(r"^(?P<fence>`{3,}|~{3,})(?P<info>[^\s`]*)[ \t]*$")
+MERMAID_FENCE_START = re.compile(r"^[ ]{0,3}(?P<fence>`{3,}|~{3,})[ \t]*mermaid[ \t]*$")
+# CommonMark allows up to three leading spaces and permits spaces in an info
+# string.  Consumers use an empty stripped ``info`` to recognize a closer.
+FENCE_LINE = re.compile(r"^[ ]{0,3}(?P<fence>`{3,}|~{3,})(?P<info>[^`~]*?)[ \t]*$")
 
 
 @dataclass
@@ -752,4 +754,3 @@ def process_mermaid_ast(
 
     walk(ast_dict.get("blocks") or [])
     return counter["n"]
-

@@ -1,5 +1,8 @@
 """DOCX Document Renderer from AST and programmatic calls."""
 
+import hashlib
+import re
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from PIL import Image
@@ -50,6 +53,7 @@ class DocxRenderer:
         self._using_shell = False
         self._width_stack: List[float] = []
         self._footnote_seq = 0
+        self._next_bookmark_id = 1
         self.doc = doc if doc is not None else self._init_document()
         self._setup_page()
 
@@ -151,6 +155,15 @@ class DocxRenderer:
         if self._width_stack:
             return self._width_stack[-1]
         return self.content_width_in
+
+    @contextmanager
+    def width_limit(self, width_in: float):
+        """Temporarily constrain nested content to its real container width."""
+        self._width_stack.append(max(0.2, width_in))
+        try:
+            yield
+        finally:
+            self._width_stack.pop()
 
     @property
     def content_height_in(self) -> float:
@@ -452,7 +465,8 @@ class DocxRenderer:
 
         # Header Row
         cell_hdr: _Cell = tbl.cell(0, 0)
-        cell_hdr.width = Inches(self.content_width_in)
+        callout_width = self.available_width_in
+        cell_hdr.width = Inches(callout_width)
         set_cell_shading(cell_hdr, hdr_bg)
         set_cell_margins(cell_hdr, top_pt=5, bottom_pt=5, left_pt=8, right_pt=8)
         set_cell_borders(cell_hdr, top=None, bottom=None, left=None, right=None)
@@ -472,7 +486,7 @@ class DocxRenderer:
 
         # Body Row
         cell_body: _Cell = tbl.cell(1, 0)
-        cell_body.width = Inches(self.content_width_in)
+        cell_body.width = Inches(callout_width)
         set_cell_shading(cell_body, body_bg)
         set_cell_margins(cell_body, top_pt=6, bottom_pt=6, left_pt=8, right_pt=8)
         subtle_border = {"val": "single", "sz": 4, "color": "E0D9EB", "space": 0}
@@ -495,7 +509,9 @@ class DocxRenderer:
                     and p_first.text == ""
                     and len(p_first.runs) == 0
                 )
-                block_renderer(item, cell_body, self, is_first=(rendered_count == 0))
+                # The body cell has 8pt left/right padding.
+                with self.width_limit(callout_width - (16 / 72)):
+                    block_renderer(item, cell_body, self, is_first=(rendered_count == 0))
                 if is_first_table_or_code and p_first._p.getparent() is not None:
                     cell_body._tc.remove(p_first._p)
                 rendered_count += 1
@@ -586,30 +602,58 @@ class DocxRenderer:
         """Renders an explicit page break (F-12)."""
         self.doc.add_page_break()
 
-    def add_bookmark(self, name: str) -> None:
-        safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in name)[:40]
-        mark_id = str(abs(hash(safe)) % 100000)
+    def bookmark_name(self, name: str) -> str:
+        """Return a Word-safe, deterministic bookmark name for a Pandoc identifier."""
+        cleaned = re.sub(r"[^A-Za-z0-9_]", "_", name)
+        if not cleaned or not cleaned[0].isalpha():
+            cleaned = f"md_{cleaned}"
+        digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+        return f"{cleaned[:31]}_{digest}"
+
+    def add_bookmark(self, name: str, block: Optional[Any] = None) -> None:
+        """Attach a bookmark to the rendered heading instead of a following spacer/body node."""
+        safe = self.bookmark_name(name)
+        mark_id = str(self._next_bookmark_id)
+        self._next_bookmark_id += 1
         start = OxmlElement("w:bookmarkStart")
         start.set(qn("w:id"), mark_id)
         start.set(qn("w:name"), safe)
         end = OxmlElement("w:bookmarkEnd")
         end.set(qn("w:id"), mark_id)
-        body = self.doc._body._element
-        # Attach to the last block
-        last = list(body)[-1] if list(body) else None
-        if last is not None and last.tag != qn("w:sectPr"):
-            last.append(start)
-            last.append(end)
+
+        if isinstance(block, Table):
+            # Numbered headings are tables: use the title cell rather than the badge.
+            paragraph = block.cell(0, 1 if len(block.columns) > 1 else 0).paragraphs[0]
+        elif isinstance(block, Paragraph):
+            paragraph = block
         else:
-            body.append(start)
-            body.append(end)
+            paragraph = self.doc.paragraphs[-1] if self.doc.paragraphs else self.doc.add_paragraph()
+
+        p = paragraph._p
+        insert_at = 1 if p.find(qn("w:pPr")) is not None else 0
+        p.insert(insert_at, start)
+        p.append(end)
 
     def add_omml(self, paragraph: Paragraph, tex: str, display: bool = False) -> None:
         from lxml import etree
         from md_to_docx.omml import tex_to_omml_xml
-        xml = tex_to_omml_xml(tex, display=display)
+        # A display equation is block-level OOXML and must not be appended inside
+        # w:p. render_display_omml() handles the normal block case; retain a valid
+        # inline fallback for unusual nested AST shapes.
+        xml = tex_to_omml_xml(tex, display=False)
         el = etree.fromstring(xml.encode("utf-8"))
         paragraph._p.append(el)
+
+    def render_display_omml(self, tex: str, container: Optional[Any] = None) -> None:
+        """Insert an m:oMathPara directly into the document or table-cell body."""
+        from lxml import etree
+        from md_to_docx.omml import tex_to_omml_xml
+
+        target = container if container is not None else self.doc
+        placeholder = target.add_paragraph()
+        math_para = etree.fromstring(tex_to_omml_xml(tex, display=True).encode("utf-8"))
+        placeholder._p.addnext(math_para)
+        placeholder._p.getparent().remove(placeholder._p)
 
     def add_footnote(self, paragraph: Paragraph, note_blocks: List[Any]) -> None:
         from md_to_docx.footnotes import add_footnote_body, add_footnote_reference, _ensure_footnotes_part, next_footnote_id
@@ -661,7 +705,7 @@ class DocxRenderer:
         on_primary = self._resolve_color(tbl_cfg.get("header_fg", "on_primary"))
 
         # Explicit tblGrid and tblW setup (F-07)
-        total_dxa = int(round(self.content_width_in * 1440))
+        total_dxa = int(round(self.available_width_in * 1440))
         base_col_dxa = total_dxa // max(1, num_cols)
         widths_dxa = [base_col_dxa] * num_cols
         if widths_dxa:
@@ -973,7 +1017,7 @@ class DocxRenderer:
         if existing_bidi is not None:
             tblPr.remove(existing_bidi)
 
-        col_width = Inches(self.content_width_in)
+        col_width = Inches(self.available_width_in)
         tbl.columns[0].width = col_width
 
         # Explicitly set table-level width in dxa or pct and center alignment
@@ -986,7 +1030,7 @@ class DocxRenderer:
             tbl_w.set(qn("w:w"), "5000")  # 5000 = 100% of cell in OOXML
         else:
             tbl_w.set(qn("w:type"), "dxa")
-            tbl_w.set(qn("w:w"), str(int(round(self.content_width_in * 1440))))
+            tbl_w.set(qn("w:w"), str(int(round(self.available_width_in * 1440))))
 
         tbl_jc = tblPr.find(qn("w:jc"))
         if tbl_jc is None:
