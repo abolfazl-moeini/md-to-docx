@@ -664,7 +664,9 @@ def generate_matrix_reports(results: List[Dict[str, Any]], out_dir: Path, run_id
         "timestamp": datetime.datetime.now().isoformat(),
         "total_pairs": len(results),
         "total_elapsed_sec": round(elapsed, 2),
-        "conversions_passed": sum(1 for r in results if r["status"] == "pass"),
+        # Conversion success is deliberately independent from oracle/review status:
+        # a valid DOCX can be produced even when semantic or visual checks fail.
+        "conversions_passed": sum(1 for r in results if r.get("conversion_success", False)),
         "conversions_failed": sum(1 for r in results if r["status"] == "fail"),
         "conversions_error": sum(1 for r in results if r["status"] == "error"),
         "structural_oracles_passed": sum(1 for r in results if r.get("structural_pass")),
