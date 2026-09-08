@@ -1,9 +1,16 @@
-"""Minimal TeX-to-OMML converter for common technical Markdown math."""
+"""TeX-to-OMML converter utilizing Pandoc for accurate OOXML math rendering."""
 
 from __future__ import annotations
 
-import re
+import io
+import json
+import shutil
+import subprocess
+from typing import Dict, List, Optional, Tuple
 from xml.etree import ElementTree as ET
+import zipfile
+
+from md_to_docx.mermaid import ConvertError
 
 M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -11,142 +18,87 @@ W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 ET.register_namespace("m", M_NS)
 ET.register_namespace("w", W_NS)
 
-
-def _m(tag: str, **attrs) -> ET.Element:
-    el = ET.Element(f"{{{M_NS}}}{tag}")
-    for k, v in attrs.items():
-        el.set(f"{{{M_NS}}}{k}" if not k.startswith("{") else k, v)
-    return el
+_CACHE: Dict[Tuple[str, bool], str] = {}
 
 
-def _run(text: str, italic: bool = True) -> ET.Element:
-    r = _m("r")
-    rpr = _m("rPr")
-    sty = _m("sty")
-    sty.set(f"{{{M_NS}}}val", "p" if not italic else "i")
-    rpr.append(sty)
-    r.append(rpr)
-    t = _m("t")
-    t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-    t.text = text
-    r.append(t)
-    return r
+def _run_pandoc_json_to_docx(pandoc_bin: str, payload: bytes) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            [pandoc_bin, "-f", "json", "-t", "docx", "-o", "-"],
+            input=payload,
+            capture_output=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise ConvertError("Pandoc math conversion timed out.") from e
 
 
-def _tex_to_element(tex: str) -> ET.Element:
-    s = tex.strip()
-    frac = re.fullmatch(r"\\frac\s*\{(.+)\}\s*\{(.+)\}", s, re.DOTALL)
-    if frac:
-        f = _m("f")
-        num = _m("num")
-        den = _m("den")
-        num.append(_tex_to_element(frac.group(1)))
-        den.append(_tex_to_element(frac.group(2)))
-        f.append(num)
-        f.append(den)
-        return f
+def batch_convert_math(items: List[Tuple[str, bool]]) -> Dict[Tuple[str, bool], str]:
+    """Convert a batch of (tex, display) pairs to OMML XML strings using Pandoc."""
+    global _CACHE
+    missing = [item for item in dict.fromkeys(items) if item not in _CACHE]
+    if not missing:
+        return {item: _CACHE[item] for item in items if item in _CACHE}
 
-    summed = re.fullmatch(r"\\sum(?:_\{(.+?)\})?(?:\^\{(.+?)\})?\s*(.*)", s, re.DOTALL)
-    if summed and s.startswith("\\sum"):
-        nary = _m("nary")
-        narypr = _m("naryPr")
-        chr_el = _m("chr")
-        chr_el.set(f"{{{M_NS}}}val", "∑")
-        narypr.append(chr_el)
-        nary.append(narypr)
-        sub = _m("sub")
-        sub.append(_tex_to_element(summed.group(1) or ""))
-        sup = _m("sup")
-        sup.append(_tex_to_element(summed.group(2) or ""))
-        e = _m("e")
-        e.append(_tex_to_element(summed.group(3) or ""))
-        nary.append(sub)
-        nary.append(sup)
-        nary.append(e)
-        return nary
+    pandoc_bin = shutil.which("pandoc")
+    if not pandoc_bin:
+        raise ConvertError("Pandoc executable not found in PATH for OMML math conversion.")
 
-    if not s:
-        return _run("")
+    blocks = []
+    for tex, display in missing:
+        kind = "DisplayMath" if display else "InlineMath"
+        blocks.append({
+            "t": "Para",
+            "c": [{"t": "Math", "c": [{"t": kind}, tex]}],
+        })
 
-    # Split on ^ and _ for simple super/sub while keeping other text as a run sequence in an e wrapper
-    parts = re.split(r"(\^[^{]\S*|\^\{[^}]+\}|_{[^{]\S*}|_\{[^}]+\})", s)
-    if len(parts) == 1:
-        return _run(_unescape_tex(s), italic=any(c.isalpha() for c in s))
+    proc = None
+    # The AST reader accepts both 1.22.x and 1.23.x (Pandoc 2.11-3.x). Try the
+    # current version first, then fall back for older Pandoc installs.
+    for api_version in ([1, 23, 1], [1, 22, 2]):
+        ast = {
+            "pandoc-api-version": api_version,
+            "meta": {},
+            "blocks": blocks,
+        }
+        proc = _run_pandoc_json_to_docx(pandoc_bin, json.dumps(ast).encode("utf-8"))
+        if proc.returncode == 0:
+            break
+        err_text = proc.stderr.decode("utf-8", errors="replace")
+        if "pandoc-api-version" in err_text and api_version != [1, 22, 2]:
+            continue
+        break
 
-    ssub = _m("sSubSup") if any(p.startswith("^") for p in parts) and any(p.startswith("_") for p in parts) else None
-    # Sequential: wrap each piece
-    container = _m("e") if False else None
-    # Build a linear oMath of runs and sSup/sSub
-    wrapper = _m("e")
-    i = 0
-    tokens = parts
-    buf = []
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok.startswith("^"):
-            inner = tok[2:-1] if tok.startswith("^{") else tok[1:]
-            node = _m("sSup")
-            e = _m("e")
-            if buf:
-                e.append(_run(_unescape_tex("".join(buf))))
-                buf = []
-            else:
-                e.append(_run(""))
-            node.append(e)
-            sup = _m("sup")
-            sup.append(_tex_to_element(inner))
-            node.append(sup)
-            wrapper.append(node)
-        elif tok.startswith("_"):
-            inner = tok[2:-1] if tok.startswith("_{") else tok[1:]
-            node = _m("sSub")
-            e = _m("e")
-            if buf:
-                e.append(_run(_unescape_tex("".join(buf))))
-                buf = []
-            else:
-                e.append(_run(""))
-            node.append(e)
-            sub = _m("sub")
-            sub.append(_tex_to_element(inner))
-            node.append(sub)
-            wrapper.append(node)
-        else:
-            buf.append(tok)
-        i += 1
-    if buf:
-        wrapper.append(_run(_unescape_tex("".join(buf))))
-    if len(wrapper) == 1:
-        return wrapper[0]
-    return wrapper
+    assert proc is not None
+    if proc.returncode != 0:
+        err_msg = proc.stderr.decode("utf-8", errors="replace").strip()
+        raise ConvertError(f"Pandoc math conversion failed: {err_msg}")
 
+    with zipfile.ZipFile(io.BytesIO(proc.stdout)) as z:
+        doc_xml = z.read("word/document.xml")
+        root = ET.fromstring(doc_xml)
+        paras = root.findall(f".//{{{W_NS}}}p")
 
-def _unescape_tex(s: str) -> str:
-    return (
-        s.replace("\\,", " ")
-        .replace("\\;", " ")
-        .replace("\\ ", " ")
-        .replace("\\times", "×")
-        .replace("\\cdot", "·")
-        .replace("\\infty", "∞")
-        .replace("\\alpha", "α")
-        .replace("\\beta", "β")
-        .replace("\\pi", "π")
-        .replace("\\sum", "∑")
-        .replace("\\frac", "")
-        .strip()
-    )
+        for i, (tex, display) in enumerate(missing):
+            if i < len(paras):
+                p = paras[i]
+                target_tag = f"{{{M_NS}}}oMathPara" if display else f"{{{M_NS}}}oMath"
+                elem = p.find(f".//{target_tag}")
+                if elem is None and display:
+                    elem = p.find(f".//{{{M_NS}}}oMath")
+                if elem is not None:
+                    _CACHE[(tex, display)] = ET.tostring(elem, encoding="unicode")
+                    continue
+            err_msg = proc.stderr.decode("utf-8", errors="replace").strip()
+            raise ConvertError(f"Invalid TeX math expression '{tex}': {err_msg or 'Pandoc failed to produce valid OMML'}")
+
+    return {item: _CACHE[item] for item in items if item in _CACHE}
 
 
 def tex_to_omml_xml(tex: str, display: bool = False) -> str:
     """Return an XML string for m:oMath or m:oMathPara."""
-    inner = _tex_to_element(tex)
-    if display:
-        para = _m("oMathPara")
-        math = _m("oMath")
-        math.append(inner)
-        para.append(math)
-        return ET.tostring(para, encoding="unicode")
-    math = _m("oMath")
-    math.append(inner)
-    return ET.tostring(math, encoding="unicode")
+    key = (tex, display)
+    if key in _CACHE:
+        return _CACHE[key]
+    results = batch_convert_math([key])
+    return results[key]

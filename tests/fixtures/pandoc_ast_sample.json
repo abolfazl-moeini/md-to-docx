@@ -103,7 +103,7 @@
                 "c": [
                   ["", [], []],
                   [],
-                  ["tests/fixtures/diagram-stub.png", ""]
+                  ["diagram-stub.png", ""]
                 ]
               }
             ]

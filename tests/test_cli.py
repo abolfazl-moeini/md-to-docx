@@ -210,5 +210,26 @@ def test_cli_convert_stdin_success(runner, tmp_path, mocker):
     assert "Success" in result.output
 
 
+def test_cli_to_md_rejects_doc_extension(runner, tmp_path):
+    bad_doc = tmp_path / "file.doc"
+    bad_doc.write_bytes(b"old doc")
+    result = runner.invoke(main, ["to-md", str(bad_doc)])
+    assert result.exit_code == 2
+    assert "Word 97-2003 .doc is not supported" in result.output
 
 
+def test_cli_to_md_rejects_missing_file(runner, tmp_path):
+    missing = tmp_path / "missing.docx"
+    result = runner.invoke(main, ["to-md", str(missing)])
+    assert result.exit_code == 2
+    assert "does not exist" in result.output
+
+
+def test_cli_to_md_success(runner, tmp_path, mocker):
+    real_docx = tmp_path / "input.docx"
+    real_docx.write_bytes(b"PK\x03\x04dummy")
+    out_md = tmp_path / "output.md"
+    mocker.patch("md_to_docx.to_md.convert_docx_to_markdown", return_value=out_md)
+    result = runner.invoke(main, ["to-md", str(real_docx), "-o", str(out_md)])
+    assert result.exit_code == 0
+    assert "Success: Generated Markdown" in result.output

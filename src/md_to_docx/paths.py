@@ -36,8 +36,9 @@ def resolve_image_source(src: str, base_dir: Path | None = None) -> Path:
     """
     Resolve a Pandoc Image target to a local file.
 
-    Relative paths are resolved only against the Markdown file directory (base_dir),
-    never against the process cwd. Remote http(s)/data URIs are rejected.
+    Relative paths are resolved ONLY against the Markdown directory (base_dir),
+    never falling back to arbitrary filenames or the process cwd (FINAL-06).
+    Remote http(s)/data URIs and unsupported schemes are rejected.
     """
     raw = (src or "").strip()
     if not raw:
@@ -50,21 +51,37 @@ def resolve_image_source(src: str, base_dir: Path | None = None) -> Path:
             f"Remote images are not supported in v1 ({scheme}:). "
             f"Download the file and reference a local path. Source: '{src}'"
         )
+    if scheme and scheme != "file":
+        raise ConvertError(f"Unsupported image scheme '{scheme}:' in source '{src}'")
 
     if scheme == "file":
         path_str = unquote(parsed.path)
         if parsed.netloc and parsed.netloc not in ("localhost", "127.0.0.1"):
             path_str = f"//{parsed.netloc}{path_str}"
         candidate = Path(path_str)
-        if candidate.exists():
+        if candidate.is_file():
             return candidate.resolve()
+        if candidate.is_dir():
+            raise ConvertError(f"Image source '{src}' is a directory, not a regular file.")
         raise ConvertError(f"Image not found: '{src}'")
 
+    # If raw path exists directly on filesystem as literal (e.g. generated Mermaid files)
+    raw_path = Path(raw)
+    if raw_path.is_absolute() and raw_path.is_file():
+        return raw_path.resolve()
+    if base_dir is not None:
+        raw_from_base = (Path(base_dir) / raw).resolve()
+        if raw_from_base.is_file():
+            return raw_from_base
+
+    # Decode percent-encoding once for URI targets
     decoded = decode_src(raw)
     direct = Path(decoded)
     if direct.is_absolute():
         if direct.is_file():
             return direct.resolve()
+        if direct.is_dir():
+            raise ConvertError(f"Image path '{direct}' is a directory, not a regular file.")
         raise ConvertError(f"Image not found: '{direct}'")
 
     if base_dir is not None:
@@ -72,13 +89,11 @@ def resolve_image_source(src: str, base_dir: Path | None = None) -> Path:
         from_base = (base / decoded).resolve()
         if from_base.is_file():
             return from_base
-        by_name = (base / Path(decoded).name).resolve()
-        if by_name.is_file():
-            return by_name
+        if from_base.is_dir():
+            raise ConvertError(f"Image path '{from_base}' is a directory, not a regular file.")
+        raise ConvertError(f"Image not found: '{decoded}' (resolved relative to '{base_dir}')")
 
-    # Explicit relative paths with a directory component (never a bare cwd filename)
-    rel = Path(decoded)
-    if not rel.is_absolute() and len(rel.parts) > 1 and rel.is_file():
-        return rel.resolve()
+    if direct.is_file():
+        return direct.resolve()
 
-    raise ConvertError(f"Image not found: '{decoded}' (resolved relative to '{base_dir}')")
+    raise ConvertError(f"Image not found: '{decoded}'")

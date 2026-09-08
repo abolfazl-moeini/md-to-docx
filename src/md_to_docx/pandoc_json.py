@@ -7,6 +7,7 @@ from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_BREAK
 from docx.table import _Cell
+from docx.text.paragraph import Paragraph
 
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -35,6 +36,25 @@ DANGEROUS_HTML_RE = re.compile(
     r"<\s*(?:script|iframe|object|embed|applet|style|form|input)\b",
     re.IGNORECASE,
 )
+
+CAPTION_STANDALONE_RE = re.compile(
+    r"^(?:شکل|Figure|Fig\.)\s+[\d\u06F0-\u06F9]+(?:[.\-–—][\d\u06F0-\u06F9]+)*\s*[.:]\s*.*",
+    re.IGNORECASE,
+)
+
+def _inline_size(renderer: DocxRenderer, default: float = 10.5) -> float:
+    nested = getattr(renderer, "_content_font_size_pt", None)
+    return float(nested) if nested is not None else default
+
+
+CUSTOM_STYLE_ROLES = {
+    "chapter overview": "overview",
+    "dba note": "note",
+    "important note": "important",
+    "warning": "warning",
+    "lab note": "lab",
+    "screenshot recommendation": "editorial",
+}
 
 
 def parse_length_in(value: str, available_in: float) -> Optional[float]:
@@ -76,23 +96,43 @@ def emit_hyperlink(
     bold: bool = False,
     italic: bool = False,
     font_size_pt: float = 11.0,
+    strike: bool = False,
+    superscript: bool = False,
+    subscript: bool = False,
+    underline: bool = False,
+    small_caps: bool = False,
     color_hex: Optional[str] = None,
 ) -> None:
+    from urllib.parse import unquote
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
     hyperlink = OxmlElement("w:hyperlink")
     if target.startswith("#"):
-        hyperlink.set(qn("w:anchor"), renderer.bookmark_name(target.lstrip("#")))
+        anchor_name = unquote(target.lstrip("#"))
+        hyperlink.set(qn("w:anchor"), renderer.bookmark_name(anchor_name))
     else:
         r_id = paragraph.part.relate_to(target, RT.HYPERLINK, is_external=True)
         hyperlink.set(qn("r:id"), r_id)
-    # Emit inner runs into a temporary paragraph, then move them under hyperlink
-    tmp = renderer.doc.add_paragraph()
-    emit_inlines(inner, renderer, tmp, bold=bold, italic=italic, font_size_pt=font_size_pt, color_hex=color_hex or "0563C1")
+    # Keep the temporary paragraph in the destination story so drawings and
+    # other relationship-bearing inlines use that story's part (e.g. footnotes).
+    tmp = Paragraph(OxmlElement("w:p"), paragraph._parent)
+    emit_inlines(
+        inner,
+        renderer,
+        tmp,
+        bold=bold,
+        italic=italic,
+        font_size_pt=font_size_pt,
+        strike=strike,
+        superscript=superscript,
+        subscript=subscript,
+        underline=underline,
+        small_caps=small_caps,
+        color_hex=color_hex or "0563C1",
+    )
     for child in list(tmp._p):
         if child.tag != qn("w:pPr"):
             hyperlink.append(child)
-    tmp._p.getparent().remove(tmp._p)
     paragraph._p.append(hyperlink)
 
 
@@ -278,6 +318,11 @@ def emit_inlines(
                 bold=bold,
                 italic=italic,
                 font_size_pt=font_size_pt,
+                strike=strike,
+                superscript=superscript,
+                subscript=subscript,
+                underline=underline,
+                small_caps=small_caps,
                 color_hex=color_hex,
             )
         elif t == "Quoted":
@@ -287,11 +332,63 @@ def emit_inlines(
                 left, right = ("«", "»") if qtype != "SingleQuote" else ("‹", "›")
             else:
                 left, right = ("\u201c", "\u201d") if qtype != "SingleQuote" else ("\u2018", "\u2019")
-            renderer.append_text(paragraph, left, font_size_pt=font_size_pt, bold=bold, italic=italic, color_hex=color_hex)
-            emit_inlines(inner, renderer, paragraph, bold=bold, italic=italic, font_size_pt=font_size_pt, color_hex=color_hex)
-            renderer.append_text(paragraph, right, font_size_pt=font_size_pt, bold=bold, italic=italic, color_hex=color_hex)
+            renderer.append_text(
+                paragraph,
+                left,
+                font_size_pt=font_size_pt,
+                bold=bold,
+                italic=italic,
+                strike=strike,
+                underline=underline,
+                color_hex=color_hex,
+            )
+            emit_inlines(
+                inner,
+                renderer,
+                paragraph,
+                bold=bold,
+                italic=italic,
+                font_size_pt=font_size_pt,
+                strike=strike,
+                superscript=superscript,
+                subscript=subscript,
+                underline=underline,
+                small_caps=small_caps,
+                color_hex=color_hex,
+            )
+            renderer.append_text(
+                paragraph,
+                right,
+                font_size_pt=font_size_pt,
+                bold=bold,
+                italic=italic,
+                strike=strike,
+                underline=underline,
+                color_hex=color_hex,
+            )
         elif t == "Span":
+            attr = c[0] if isinstance(c, list) and c else []
             inner = c[1] if isinstance(c, list) and len(c) > 1 and isinstance(c[1], list) else []
+            kvs = attr[2] if isinstance(attr, list) and len(attr) > 2 and isinstance(attr[2], list) else []
+            kv_dict = {k: v for k, v in kvs if isinstance(k, str)}
+            cstyle = str(kv_dict.get("custom-style") or "").strip()
+            if cstyle:
+                cstyle_lower = cstyle.lower()
+                role = None
+                if hasattr(renderer.template, "custom_styles") and cstyle_lower in renderer.template.custom_styles:
+                    role = renderer.template.custom_styles[cstyle_lower]
+                if role is None:
+                    role = CUSTOM_STYLE_ROLES.get(cstyle_lower)
+                if role is None and cstyle_lower in renderer.template.callouts:
+                    role = cstyle_lower
+                if role is None:
+                    if getattr(renderer.template, "custom_styles_strict", False):
+                        raise ConvertError(f"Unknown custom-style '{cstyle}' on Span")
+                    renderer.record_warning(
+                        "Unknown custom-style on Span; emitting inner inlines",
+                        code="unknown_custom_style",
+                        identity=cstyle,
+                    )
             emit_inlines(
                 inner,
                 renderer,
@@ -343,6 +440,28 @@ def emit_inlines(
                     width_in=width_in,
                     height_in=height_in,
                 )
+        elif t == "Cite":
+            inner = c[1] if isinstance(c, list) and len(c) > 1 and isinstance(c[1], list) else []
+            if inner:
+                emit_inlines(
+                    inner,
+                    renderer,
+                    paragraph,
+                    bold=bold,
+                    italic=italic,
+                    font_size_pt=font_size_pt,
+                    strike=strike,
+                    superscript=superscript,
+                    subscript=subscript,
+                    underline=underline,
+                    small_caps=small_caps,
+                    color_hex=color_hex,
+                )
+            elif isinstance(c, list) and len(c) > 0 and isinstance(c[0], list):
+                for cite_obj in c[0]:
+                    cid = cite_obj.get("citationId", "") if isinstance(cite_obj, dict) else str(cite_obj)
+                    if cid:
+                        renderer.append_text(paragraph, f"@{cid}", font_size_pt=font_size_pt, bold=bold, italic=italic, color_hex=color_hex)
         elif isinstance(c, str):
             renderer.append_text(paragraph, c, font_size_pt=font_size_pt, bold=bold, italic=italic, color_hex=color_hex)
         else:
@@ -351,7 +470,7 @@ def emit_inlines(
 
 def emit_paragraph_inlines(inlines: List[Dict[str, Any]], renderer: DocxRenderer, font_size_pt: Optional[float] = None):
     text = inlines_to_text(inlines)
-    p = renderer.begin_paragraph(text, align="both")
+    p = renderer.begin_paragraph(text)
     size = renderer.body_font_size_pt if font_size_pt is None else font_size_pt
     emit_inlines(inlines, renderer, p, font_size_pt=size)
     return p
@@ -378,6 +497,12 @@ def inlines_to_text(inlines: List[Dict[str, Any]]) -> str:
                 parts.append(inlines_to_text(c[1]))
             elif isinstance(c, list) and len(c) > 0 and isinstance(c[0], list):
                 parts.append(inlines_to_text(c[0]))
+        elif t == "Cite":
+            inner = c[1] if isinstance(c, list) and len(c) > 1 and isinstance(c[1], list) else []
+            if inner:
+                parts.append(inlines_to_text(inner))
+            elif isinstance(c, list) and len(c) > 0 and isinstance(c[0], list):
+                parts.append(" ".join(f"@{cite_obj.get('citationId', '')}" if isinstance(cite_obj, dict) else str(cite_obj) for cite_obj in c[0]))
         elif t == "RawInline":
             parts.append(c[1] if isinstance(c, list) and len(c) > 1 else str(c))
         elif t == "Note":
@@ -523,6 +648,97 @@ def parse_pandoc_table(table_c: List[Any]) -> Tuple[List[str], List[List[str]]]:
     return headers, rows
 
 
+def _int_to_roman(n: int) -> str:
+    if n <= 0 or n > 3999:
+        return str(n)
+    val = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+    syb = ["m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"]
+    res = ""
+    for i in range(len(val)):
+        while n >= val[i]:
+            res += syb[i]
+            n -= val[i]
+    return res
+
+
+def _int_to_alpha(n: int) -> str:
+    if n <= 0:
+        return str(n)
+    res = ""
+    while n > 0:
+        n -= 1
+        res = chr(ord('a') + (n % 26)) + res
+        n //= 26
+    return res
+
+
+def format_ordered_marker(num: int, style: str, delim: str, is_rtl: bool) -> str:
+    if style == "LowerAlpha":
+        text = _int_to_alpha(num)
+    elif style == "UpperAlpha":
+        text = _int_to_alpha(num).upper()
+    elif style == "LowerRoman":
+        text = _int_to_roman(num)
+    elif style == "UpperRoman":
+        text = _int_to_roman(num).upper()
+    else:
+        text = to_persian_digits(str(num)) if is_rtl else str(num)
+
+    if delim == "OneParen":
+        return f"{text})"
+    elif delim == "TwoParens":
+        return f"({text})"
+    else:
+        return f"{text}."
+
+
+def _strip_heading_number_inlines(inlines: List[Dict[str, Any]], number: str) -> List[Dict[str, Any]]:
+    """Remove heading number prefix from inlines while preserving rich text formatting."""
+    if not inlines or not number:
+        return list(inlines)
+
+    result = [dict(inl) for inl in inlines]
+    first = result[0]
+    if first.get("t") == "Str":
+        text = str(first.get("c", ""))
+        if text.startswith(number):
+            rem = text[len(number):].lstrip(" .-\t")
+            if rem:
+                result[0] = {"t": "Str", "c": rem}
+            else:
+                result.pop(0)
+            while result and result[0].get("t") in ("Space", "SoftBreak"):
+                result.pop(0)
+    return result
+
+
+def _strip_heading_anchor_inlines(inlines: List[Dict[str, Any]], heading_id: Optional[str]) -> List[Dict[str, Any]]:
+    """Remove trailing {#id} anchor from inlines so it never leaks into visible heading runs (E03)."""
+    if not inlines or not heading_id:
+        return list(inlines)
+
+    result = [dict(inl) for inl in inlines]
+    while result and result[-1].get("t") in ("Space", "SoftBreak", "LineBreak"):
+        result.pop()
+
+    if not result:
+        return result
+
+    last = result[-1]
+    if last.get("t") == "Str":
+        text = str(last.get("c", ""))
+        pattern = f"#{heading_id}"
+        if "{" in text and "}" in text and pattern in text:
+            text_cleaned = re.sub(r"\{#" + re.escape(heading_id) + r"\}", "", text).strip()
+            if text_cleaned:
+                result[-1] = {"t": "Str", "c": text_cleaned}
+            else:
+                result.pop()
+            while result and result[-1].get("t") in ("Space", "SoftBreak"):
+                result.pop()
+    return result
+
+
 ALIGN_MAP = {
     "AlignLeft": "left",
     "AlignRight": "right",
@@ -557,8 +773,11 @@ def render_ast_table(
     head_rows = thead[1] if len(thead) > 1 and isinstance(thead[1], list) else []
     body_rows = []
     for tbody in tbodies:
-        if isinstance(tbody, list) and len(tbody) > 3 and isinstance(tbody[3], list):
-            body_rows.extend(tbody[3])
+        if isinstance(tbody, list):
+            if len(tbody) > 2 and isinstance(tbody[2], list):
+                body_rows.extend(tbody[2])
+            if len(tbody) > 3 and isinstance(tbody[3], list):
+                body_rows.extend(tbody[3])
 
     foot_rows = tfoot[1] if len(tfoot) > 1 and isinstance(tfoot[1], list) else []
     body_rows.extend(foot_rows)
@@ -610,14 +829,39 @@ def render_ast_table(
     target = container if container is not None else renderer.doc
     tbl = target.add_table(rows=num_rows, cols=num_cols)
     tbl.autofit = False
+    _ast_tbl_desc = tbl._tbl.tblPr.find(qn("w:tblDescription"))
+    if _ast_tbl_desc is None:
+        _ast_tbl_desc = OxmlElement("w:tblDescription")
+        tbl._tbl.tblPr.append(_ast_tbl_desc)
+    _ast_tbl_desc.set(qn("w:val"), "data_table")
 
     if is_rtl_table and renderer.template.tables.get("bidi_visual", True):
         set_table_bidi_visual(tbl)
 
     total_dxa = int(round(renderer.available_width_in * 1440))
-    base_col_dxa = total_dxa // max(1, num_cols)
-    widths_dxa = [base_col_dxa] * num_cols
-    widths_dxa[-1] += total_dxa - sum(widths_dxa)
+    min_col_dxa = 288  # at least 0.2 inch per column
+    explicit_widths = {}
+    default_indices = []
+    for c_idx in range(num_cols):
+        cs = colspecs[c_idx] if c_idx < len(colspecs) and isinstance(colspecs[c_idx], list) else []
+        cw = cs[1] if len(cs) > 1 and isinstance(cs[1], dict) else {}
+        if cw.get("t") == "ColWidth" and isinstance(cw.get("c"), (int, float)) and cw["c"] > 0:
+            explicit_widths[c_idx] = max(min_col_dxa, int(round(cw["c"] * total_dxa)))
+        else:
+            default_indices.append(c_idx)
+
+    used_dxa = sum(explicit_widths.values())
+    rem_dxa = max(0, total_dxa - used_dxa)
+    if default_indices:
+        def_width = max(min_col_dxa, rem_dxa // len(default_indices))
+        widths_dxa = [explicit_widths.get(i, def_width) for i in range(num_cols)]
+    else:
+        widths_dxa = [explicit_widths.get(i, total_dxa // max(1, num_cols)) for i in range(num_cols)]
+
+    diff = total_dxa - sum(widths_dxa)
+    if widths_dxa:
+        widths_dxa[-1] = max(min_col_dxa, widths_dxa[-1] + diff)
+
     set_table_column_widths(tbl, widths_dxa)
 
     tbl_cfg = renderer.template.tables or {}
@@ -684,7 +928,7 @@ def render_ast_table(
         renderer.append_text(
             p_cap,
             caption,
-            font_size_pt=9.5,
+            font_size_pt=renderer.caption_size_pt,
             italic=True,
             color_hex=renderer.template.colors.get("caption", "5A5A5A"),
         )
@@ -697,6 +941,33 @@ def render_ast_table(
         spacer.paragraph_format.space_after = Pt(6)
 
 
+def _collect_list_item_texts(items: List[Any]) -> str:
+    texts: List[str] = []
+    for item_blocks in items:
+        if not isinstance(item_blocks, list):
+            continue
+        for blk in item_blocks:
+            if isinstance(blk, dict) and blk.get("t") in ("Para", "Plain"):
+                texts.append(inlines_to_text(blk.get("c", [])))
+    return " ".join(texts)
+
+
+def _resolve_list_rtl(
+    renderer: DocxRenderer,
+    items: List[Any],
+    parent_rtl: Optional[bool],
+) -> bool:
+    """List direction comes from the container, not from each item's language (E05)."""
+    if parent_rtl is True:
+        return True
+    combined = _collect_list_item_texts(items)
+    if combined.strip():
+        return renderer.resolve_paragraph_bidi(combined)
+    if parent_rtl is not None:
+        return parent_rtl
+    return renderer.template.direction != "ltr"
+
+
 def render_block(
     block: Dict[str, Any],
     renderer: DocxRenderer,
@@ -705,6 +976,7 @@ def render_block(
     default_align: Optional[str] = None,
     is_header: bool = False,
     list_level: int = 0,
+    list_bidi: Optional[bool] = None,
 ) -> None:
     """
     Unified recursive dispatcher for all Pandoc AST block nodes across document root,
@@ -719,21 +991,40 @@ def render_block(
         text = inlines_to_text(c[2])
         info = parse_heading(text, level=level)
         if not renderer.template.headings.get("extract_number", True):
-            info = HeadingInfo(level=level, number=None, title=text, raw_text=text)
+            # extract_number:false keeps the full heading text, including any number prefix (F05).
+            info = HeadingInfo(level=level, number=None, title=text, raw_text=text, heading_id=info.heading_id)
         attr = c[1] if isinstance(c, list) and len(c) > 1 else []
-        heading_id = attr[0] if isinstance(attr, list) and attr else ""
+        heading_id = (attr[0] if isinstance(attr, list) and attr else "") or (info.heading_id or "")
+        strip_number = bool(
+            container is None
+            and info.number
+            and renderer.template.headings.get("extract_number", True)
+            and renderer.template.headings.get("badge", True)
+        )
+        title_inlines = _strip_heading_number_inlines(c[2], info.number) if strip_number else list(c[2])
+        if heading_id:
+            title_inlines = _strip_heading_anchor_inlines(title_inlines, heading_id)
+
+        cfg = (renderer.template.headings or {}).get(f"h{level}", {})
+        h_font_size = float(cfg.get("size_pt", 14.0)) if isinstance(cfg, dict) and "size_pt" in cfg else 14.0
+        h_bold = cfg.get("bold", True) if isinstance(cfg, dict) else True
+
         if container is None:
-            heading_block = renderer.render_heading(info)
+            heading_block = renderer.render_heading(info, title_inlines=title_inlines)
             if heading_id:
                 renderer.add_bookmark(heading_id, block=heading_block)
         else:
             p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
-            is_rtl = contains_persian(text) if renderer.template.direction == "rtl" else False
+            is_rtl = renderer.resolve_paragraph_bidi(info.title)
             set_paragraph_bidi(p, bidi=is_rtl)
             set_paragraph_align(p, "start")
+            renderer._set_heading_outline(p, level)
             p.paragraph_format.space_before = Pt(4)
             p.paragraph_format.space_after = Pt(2)
-            emit_inlines(c[2], renderer, p, font_size_pt=11.5, bold=True)
+            with renderer.font_role("heading"):
+                emit_inlines(title_inlines, renderer, p, font_size_pt=h_font_size, bold=h_bold)
+            if heading_id:
+                renderer.add_bookmark(heading_id, block=p)
 
     elif t == "Figure":
         caption_text = None
@@ -776,8 +1067,8 @@ def render_block(
 
     elif t in ("Para", "Plain"):
         # Pandoc represents display math as a Math inline inside its own Para.
-        # m:oMathPara is block-level OOXML, so emit it directly under w:body/w:tc
-        # instead of nesting it inside the paragraph created for ordinary inlines.
+        # Per Word OMML specification (FINAL-01), m:oMathPara must be inside a w:p element.
+        # render_display_omml creates a host paragraph and appends m:oMathPara.
         if (
             isinstance(c, list)
             and len(c) == 1
@@ -796,6 +1087,28 @@ def render_block(
             inl for inl in c
             if isinstance(inl, dict) and inl.get("t") not in ("Image", "Space", "SoftBreak", "LineBreak")
         ]
+        if len(images) == 1 and non_spaces:
+            other_inlines = [inl for inl in c if not (isinstance(inl, dict) and inl.get("t") == "Image")]
+            other_text = inlines_to_text(other_inlines).strip()
+            if CAPTION_RE.match(other_text):
+                image = images[0]
+                img_src = image["c"][2][0] if len(image.get("c", [])) > 2 and image["c"][2] else ""
+                alt = inlines_to_text(image.get("c", [[], []])[1])
+                caption = other_text
+                if caption.startswith("fig:"):
+                    caption = caption[4:].strip()
+                if img_src:
+                    w_in, h_in = image_extent_in(image.get("c", [None])[0], renderer)
+                    renderer.render_image(
+                        Path(img_src),
+                        caption=caption,
+                        alt_text=(alt.strip() if alt else None),
+                        container=container,
+                        width_in=w_in,
+                        height_in=h_in,
+                    )
+                    return
+
         if images and len(non_spaces) == 0:
             for image in images:
                 img_src = image["c"][2][0] if len(image.get("c", [])) > 2 and image["c"][2] else ""
@@ -817,19 +1130,38 @@ def render_block(
                         height_in=h_in,
                     )
         else:
+            text = inlines_to_text(c)
+            # Check for standalone caption without image (B00 lines 115, 125, 262, 401, 435)
+            if CAPTION_STANDALONE_RE.match(text.strip()):
+                renderer.record_warning(
+                    "Standalone caption without associated image",
+                    code="caption_without_image",
+                    path=path,
+                    identity=text.strip(),
+                )
+                target = container if container is not None else renderer.doc
+                p = target.add_paragraph()
+                is_rtl = renderer.resolve_paragraph_bidi(text)
+                set_paragraph_bidi(p, bidi=is_rtl)
+                set_paragraph_align(p, "center")
+                p.paragraph_format.space_before = Pt(4)
+                p.paragraph_format.space_after = Pt(8)
+                cap_color = renderer._resolve_color(renderer.template.colors.get("caption", "5A5A5A"))
+                emit_inlines(c, renderer, p, font_size_pt=renderer.caption_size_pt, italic=True, color_hex=cap_color)
+                return
+
             if container is not None:
                 p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
-                text = inlines_to_text(c)
                 is_rtl = contains_persian(text) if renderer.template.direction == "rtl" else False
                 set_paragraph_bidi(p, bidi=is_rtl)
                 if default_align in ("left", "right", "center"):
                     set_paragraph_align(p, default_align)
                 else:
-                    set_paragraph_align(p, "both")
+                    set_paragraph_align(p, renderer.paragraph_align)
                 p.paragraph_format.line_spacing = 1.15
                 p.paragraph_format.space_after = Pt(4)
                 fg_col = renderer._resolve_color((renderer.template.tables or {}).get("header_fg", "on_primary")) if is_header else None
-                emit_inlines(c, renderer, p, font_size_pt=10.5, color_hex=fg_col, bold=is_header)
+                emit_inlines(c, renderer, p, font_size_pt=_inline_size(renderer), color_hex=fg_col, bold=is_header)
             else:
                 emit_paragraph_inlines(c, renderer)
 
@@ -839,7 +1171,7 @@ def render_block(
                 if b.get("t") in ("Para", "Plain"):
                     inlines = b.get("c") or []
                     p = renderer.begin_quote_paragraph(inlines_to_text(inlines))
-                    emit_inlines(inlines, renderer, p, font_size_pt=10.5)
+                    emit_inlines(inlines, renderer, p, font_size_pt=_inline_size(renderer))
                 else:
                     render_block(b, renderer, container=None, path=f"{path}.BlockQuote")
         else:
@@ -850,7 +1182,7 @@ def render_block(
                     txt = inlines_to_text(b.get("c", []))
                     is_rtl = contains_persian(txt) if renderer.template.direction == "rtl" else False
                     set_paragraph_bidi(p, bidi=is_rtl)
-                    set_paragraph_align(p, "both")
+                    set_paragraph_align(p, renderer.paragraph_align)
                     quote_cfg = renderer.template.quotes or {}
                     border_color = renderer._resolve_color(quote_cfg.get("border_color", "primary"))
                     quote_bg = renderer._resolve_color(quote_cfg.get("bg", "quote_bg"))
@@ -858,7 +1190,7 @@ def render_block(
                     border_side = renderer.quote_border_side()
                     set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15, side=border_side)
                     set_paragraph_shading(p, quote_bg)
-                    emit_inlines(b.get("c", []), renderer, p, font_size_pt=10.5, italic=True)
+                    emit_inlines(b.get("c", []), renderer, p, font_size_pt=_inline_size(renderer), italic=True)
                 else:
                     render_block(b, renderer, container=container, path=f"{path}.BlockQuote[{q_idx}]")
 
@@ -868,6 +1200,8 @@ def render_block(
         classes = attr[1] if isinstance(attr, list) and len(attr) > 1 and isinstance(attr[1], list) else []
         kvs = attr[2] if isinstance(attr, list) and len(attr) > 2 and isinstance(attr[2], list) else []
         kv_dict = {k: v for k, v in kvs}
+
+        cstyle = kv_dict.get("custom-style")
 
         if "mermaid-figure" in classes:
             caption = kv_dict.get("caption")
@@ -879,6 +1213,36 @@ def render_block(
                             img_path = inl["c"][2][0]
             if img_path:
                 renderer.render_image(Path(img_path), caption=caption, container=container, is_mermaid=True)
+
+        elif cstyle:
+            cstyle_clean = str(cstyle).strip()
+            cstyle_lower = cstyle_clean.lower()
+            role = None
+            if hasattr(renderer.template, "custom_styles") and cstyle_lower in renderer.template.custom_styles:
+                role = renderer.template.custom_styles[cstyle_lower]
+            if role is None:
+                role = CUSTOM_STYLE_ROLES.get(cstyle_lower)
+            if role is None and cstyle_lower in renderer.template.callouts:
+                role = cstyle_lower
+
+            if role:
+                title = kv_dict.get("title", "")
+
+                def callout_dispatcher(item, cell, rnd, is_first=False):
+                    render_block(item, rnd, container=cell, path=f"{path}.Div[{role}]")
+
+                renderer.render_callout(role, title, child_blocks, block_renderer=callout_dispatcher, container=container)
+            else:
+                if getattr(renderer.template, "custom_styles_strict", False):
+                    raise ConvertError(f"Unknown custom-style '{cstyle_clean}' encountered in strict mode at {path}")
+                renderer.record_warning(
+                    "Unknown custom-style; rendering child blocks directly",
+                    code="unknown_custom_style",
+                    path=path,
+                    identity=cstyle_clean,
+                )
+                for i, cb in enumerate(child_blocks):
+                    render_block(cb, renderer, container=container, path=f"{path}.Div[{i}]")
 
         elif any(cls in renderer.template.callouts for cls in classes):
             cls = next(cl for cl in classes if cl in renderer.template.callouts)
@@ -905,27 +1269,32 @@ def render_block(
         renderer.render_code_block(code_str, language=lang, container=container)
 
     elif t == "BulletList":
-        for item_idx, item_blocks in enumerate(c):
+        items = c if isinstance(c, list) else []
+        this_rtl = _resolve_list_rtl(renderer, items, list_bidi)
+        for item_idx, item_blocks in enumerate(items):
+            if not isinstance(item_blocks, list):
+                continue
             for blk_idx, blk in enumerate(item_blocks):
                 if blk.get("t") in ("Para", "Plain"):
                     if container is not None:
                         p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
                     else:
                         p = renderer.doc.add_paragraph()
-                    txt = inlines_to_text(blk.get("c", []))
-                    is_rtl = contains_persian(txt) if renderer.template.direction == "rtl" else False
-                    set_paragraph_bidi(p, bidi=is_rtl)
+                    set_paragraph_bidi(p, bidi=this_rtl)
                     set_paragraph_align(p, "start")
+                    p.paragraph_format.line_spacing = renderer._line_spacing()
                     p.paragraph_format.space_after = Pt(2)
-                    indent = Inches(0.25 * (list_level + 1))
-                    if is_rtl:
+                    hanging = Inches(0.22)
+                    indent = Inches(0.25 * (list_level + 1)) + hanging
+                    if this_rtl:
                         p.paragraph_format.right_indent = indent
                     else:
                         p.paragraph_format.left_indent = indent
+                    p.paragraph_format.first_line_indent = -hanging
                     if blk_idx == 0:
                         r_mark = p.add_run("- ")
-                        set_run_cs_font(r_mark, font_name=renderer.template.fonts.get("body", "Vazirmatn"), size_pt=10.5)
-                    emit_inlines(blk.get("c", []), renderer, p, font_size_pt=10.5)
+                        set_run_cs_font(r_mark, font_name=renderer.template.fonts.get("body", "Vazirmatn"), size_pt=renderer.body_font_size_pt)
+                    emit_inlines(blk.get("c", []), renderer, p, font_size_pt=renderer.body_font_size_pt)
                 else:
                     render_block(
                         blk,
@@ -933,39 +1302,47 @@ def render_block(
                         container=container,
                         path=f"{path}.BulletList[{item_idx}].{blk.get('t', 'Unknown')}",
                         list_level=list_level + 1,
+                        list_bidi=this_rtl,
                     )
 
     elif t == "OrderedList":
-        attr = c[0] if c else [1]
+        attr = c[0] if c else [1, {"t": "Decimal"}, {"t": "Period"}]
         items = c[1] if len(c) > 1 else []
         start = attr[0] if isinstance(attr, list) and attr else 1
         try:
             start = int(start)
         except (TypeError, ValueError):
             start = 1
+        style = attr[1].get("t", "Decimal") if len(attr) > 1 and isinstance(attr[1], dict) else "Decimal"
+        delim = attr[2].get("t", "Period") if len(attr) > 2 and isinstance(attr[2], dict) else "Period"
+        this_rtl = _resolve_list_rtl(renderer, items, list_bidi)
+
         for item_idx, item_blocks in enumerate(items):
-            marker = f"{start + item_idx}."
+            if not isinstance(item_blocks, list):
+                continue
+            current_num = start + item_idx
             for blk_idx, blk in enumerate(item_blocks):
                 if blk.get("t") in ("Para", "Plain"):
                     if container is not None:
                         p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
                     else:
                         p = renderer.doc.add_paragraph()
-                    txt = inlines_to_text(blk.get("c", []))
-                    is_rtl = contains_persian(txt) if renderer.template.direction == "rtl" else False
-                    set_paragraph_bidi(p, bidi=is_rtl)
+                    set_paragraph_bidi(p, bidi=this_rtl)
                     set_paragraph_align(p, "start")
+                    p.paragraph_format.line_spacing = renderer._line_spacing()
                     p.paragraph_format.space_after = Pt(2)
-                    indent = Inches(0.25 * (list_level + 1))
-                    if is_rtl:
+                    hanging = Inches(0.22)
+                    indent = Inches(0.25 * (list_level + 1)) + hanging
+                    if this_rtl:
                         p.paragraph_format.right_indent = indent
                     else:
                         p.paragraph_format.left_indent = indent
+                    p.paragraph_format.first_line_indent = -hanging
                     if blk_idx == 0:
-                        disp_marker = to_persian_digits(marker) if is_rtl else marker
+                        disp_marker = format_ordered_marker(current_num, style, delim, this_rtl)
                         r_mark = p.add_run(f"{disp_marker} ")
-                        set_run_cs_font(r_mark, font_name=renderer.template.fonts.get("body", "Vazirmatn"), size_pt=10.5)
-                    emit_inlines(blk.get("c", []), renderer, p, font_size_pt=10.5)
+                        set_run_cs_font(r_mark, font_name=renderer.template.fonts.get("body", "Vazirmatn"), size_pt=renderer.body_font_size_pt)
+                    emit_inlines(blk.get("c", []), renderer, p, font_size_pt=renderer.body_font_size_pt)
                 else:
                     render_block(
                         blk,
@@ -973,6 +1350,7 @@ def render_block(
                         container=container,
                         path=f"{path}.OrderedList[{item_idx}].{blk.get('t', 'Unknown')}",
                         list_level=list_level + 1,
+                        list_bidi=this_rtl,
                     )
 
     elif t == "DefinitionList":
@@ -981,12 +1359,13 @@ def render_block(
             term_text = inlines_to_text(term_inlines)
             target = container if container is not None else renderer.doc
             p_term = target.add_paragraph()
-            is_rtl = contains_persian(term_text) if renderer.template.direction == "rtl" else False
+            is_rtl = renderer.resolve_paragraph_bidi(term_text)
             set_paragraph_bidi(p_term, bidi=is_rtl)
             set_paragraph_align(p_term, "start")
+            p_term.paragraph_format.line_spacing = renderer._line_spacing()
             p_term.paragraph_format.space_before = Pt(6)
             p_term.paragraph_format.space_after = Pt(2)
-            emit_inlines(term_inlines, renderer, p_term, font_size_pt=11.0, bold=True)
+            emit_inlines(term_inlines, renderer, p_term, font_size_pt=renderer.body_font_size_pt, bold=True)
 
             defs = item[1] if len(item) > 1 else []
             for d_idx, d_blocks in enumerate(defs):
@@ -994,15 +1373,16 @@ def render_block(
                     if db.get("t") in ("Para", "Plain"):
                         p_def = target.add_paragraph()
                         d_text = inlines_to_text(db.get("c", []))
-                        is_rtl_d = contains_persian(d_text) if renderer.template.direction == "rtl" else False
+                        is_rtl_d = renderer.resolve_paragraph_bidi(d_text)
                         set_paragraph_bidi(p_def, bidi=is_rtl_d)
-                        set_paragraph_align(p_def, "both")
+                        set_paragraph_align(p_def, renderer.paragraph_align)
+                        p_def.paragraph_format.line_spacing = renderer._line_spacing()
                         if is_rtl_d:
                             p_def.paragraph_format.right_indent = Inches(0.3)
                         else:
                             p_def.paragraph_format.left_indent = Inches(0.3)
                         p_def.paragraph_format.space_after = Pt(4)
-                        emit_inlines(db.get("c", []), renderer, p_def, font_size_pt=10.5)
+                        emit_inlines(db.get("c", []), renderer, p_def, font_size_pt=renderer.body_font_size_pt)
                     else:
                         render_block(db, renderer, container=container, path=f"{path}.DefinitionList[{i}].def[{d_idx}].{db.get('t', 'Unknown')}")
 
@@ -1016,7 +1396,7 @@ def render_block(
                 is_rtl = contains_persian(txt) if renderer.template.direction == "rtl" else False
                 set_paragraph_bidi(p, bidi=is_rtl)
                 set_paragraph_align(p, "start")
-                emit_inlines(line, renderer, p, font_size_pt=10.5)
+                emit_inlines(line, renderer, p, font_size_pt=_inline_size(renderer))
             else:
                 emit_paragraph_inlines(line, renderer)
 
@@ -1081,6 +1461,54 @@ def ast_to_docx(ast_dict: Dict[str, Any], renderer: DocxRenderer) -> Document:
                 f"Unsupported Pandoc AST API version: {api_version}. "
                 f"Supported Pandoc API versions are 1.22.x through 1.23.x (Pandoc 2.11 - 3.x)."
             )
+    meta = ast_dict.get("meta", {})
+    if meta and hasattr(renderer.doc, "core_properties"):
+        if "title" in meta:
+            t_node = meta["title"]
+            title_val = inlines_to_text(t_node.get("c", [])) if isinstance(t_node, dict) else str(t_node)
+            if title_val.strip():
+                try:
+                    renderer.doc.core_properties.title = title_val.strip()
+                except Exception:
+                    pass
+        if "author" in meta:
+            a_node = meta["author"]
+            a_val = ""
+            if isinstance(a_node, dict):
+                a_val = inlines_to_text(a_node.get("c", []))
+            elif isinstance(a_node, list):
+                a_val = "; ".join(inlines_to_text(a.get("c", [])) if isinstance(a, dict) else str(a) for a in a_node)
+            elif isinstance(a_node, str):
+                a_val = a_node
+            if a_val.strip():
+                try:
+                    renderer.doc.core_properties.author = a_val.strip()
+                except Exception:
+                    pass
+
+    def _meta_text(node) -> str:
+        if node is None:
+            return ""
+        if isinstance(node, dict):
+            t = node.get("t")
+            c = node.get("c")
+            if t == "MetaString":
+                return str(c or "")
+            if t == "MetaInlines" and isinstance(c, list):
+                return inlines_to_text(c)
+            if t == "MetaBool":
+                return "true" if c else "false"
+            if t == "MetaMap" and isinstance(c, dict) and "c" in node:
+                return ""
+        return str(node)
+
+    dir_val = _meta_text(meta.get("dir") or meta.get("direction")).strip().lower()
+    if dir_val in ("ltr", "rtl"):
+        renderer.content_direction = dir_val
+    toc_val = _meta_text(meta.get("toc")).strip().lower()
+    if toc_val in ("true", "yes", "1"):
+        renderer.insert_toc_field()
+
     blocks = ast_dict.get("blocks", [])
     for idx, block in enumerate(blocks):
         render_block(block, renderer, container=None, path=f"root.blocks[{idx}]")

@@ -49,6 +49,12 @@ def convert(input_path: str, output_path: str | None, template_name: str, overwr
                 err=True,
             )
             sys.exit(2)
+        if out_file.suffix.lower() != ".docx":
+            click.echo(
+                f"Error: Output path must have a .docx extension (got '{out_file.suffix or out_file.name}').",
+                err=True,
+            )
+            sys.exit(2)
         if out_file.is_dir():
             click.echo(f"Error: Output path '{out_file}' is a directory, not a regular file.", err=True)
             sys.exit(2)
@@ -123,15 +129,21 @@ def convert(input_path: str, output_path: str | None, template_name: str, overwr
     else:
         out_file = Path(output_path).resolve()
 
+    if out_file == in_file:
+        click.echo("Error: Output path cannot be identical to input path.", err=True)
+        sys.exit(2)
+
     if out_file.suffix.lower() == ".doc":
         click.echo(
             "Error: Word 97-2003 .doc is not supported. Use a .docx output path.",
             err=True,
         )
         sys.exit(2)
-
-    if out_file == in_file:
-        click.echo("Error: Output path cannot be identical to input path.", err=True)
+    if out_file.suffix.lower() != ".docx":
+        click.echo(
+            f"Error: Output path must have a .docx extension (got '{out_file.suffix or out_file.name}').",
+            err=True,
+        )
         sys.exit(2)
 
     if out_file.is_dir():
@@ -211,6 +223,54 @@ def validate_template(template_name_or_path: str):
         sys.exit(1)
     except Exception as e:
         click.echo(f"Unexpected validation error: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command(name="to-md")
+@click.argument("docx_path", type=click.Path(exists=False, dir_okay=True, readable=False))
+@click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False), help="Output Markdown path.")
+@click.option("-f", "--overwrite", is_flag=True, default=False, help="Overwrite existing output Markdown file.")
+@click.option("--media-dir", default=None, help="Directory to save extracted images.")
+def to_md(docx_path: str, output_path: str | None, overwrite: bool, media_dir: str | None):
+    """Converts a DOCX document into Markdown and extracts media assets (FINAL-16)."""
+    from md_to_docx.to_md import convert_docx_to_markdown
+
+    in_file = Path(docx_path)
+    if in_file.suffix.lower() == ".doc":
+        click.echo("Error: Word 97-2003 .doc is not supported. Provide a .docx file.", err=True)
+        sys.exit(2)
+    if in_file.suffix.lower() != ".docx":
+        click.echo(
+            f"Error: Input file must have a .docx extension, got '{in_file.suffix or in_file.name}'.",
+            err=True,
+        )
+        sys.exit(2)
+    if not in_file.exists():
+        click.echo(f"Error: Input DOCX file '{docx_path}' does not exist.", err=True)
+        sys.exit(2)
+    if in_file.is_dir():
+        click.echo(f"Error: Input path '{docx_path}' is a directory, not a regular file.", err=True)
+        sys.exit(2)
+    if output_path is not None and Path(output_path).suffix.lower() != ".md":
+        click.echo(
+            f"Error: Output path must have a .md extension, got '{Path(output_path).suffix or output_path}'.",
+            err=True,
+        )
+        sys.exit(2)
+
+    try:
+        saved = convert_docx_to_markdown(
+            docx_path=in_file,
+            output_path=output_path,
+            overwrite=overwrite,
+            media_dir=media_dir,
+        )
+        click.echo(f"Success: Generated Markdown at '{saved}'")
+    except ConvertError as e:
+        click.echo(f"Conversion Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Unexpected Error: {e}", err=True)
         sys.exit(1)
 
 

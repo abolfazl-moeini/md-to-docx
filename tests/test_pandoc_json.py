@@ -37,7 +37,9 @@ def test_ast_to_docx_with_sample_ast(tmp_path):
 
     doc = Document()
     tmpl = Template.load("purple_book")
-    renderer = DocxRenderer(doc, tmpl)
+    # base_dir points at the fixtures dir so the AST's relative image
+    # ("diagram-stub.png") resolves without cwd/parent fallbacks (FINAL-06).
+    renderer = DocxRenderer(doc, tmpl, base_dir=Path(__file__).parent / "fixtures")
 
     ast_to_docx(ast_data, renderer)
 

@@ -5,17 +5,24 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from md_to_docx.template import Template, PROJECT_ROOT
 from md_to_docx.admonitions import preprocess_admonitions
 from md_to_docx.mermaid import process_mermaid_ast, ConvertError
 from md_to_docx.pandoc_json import ast_to_docx
 from md_to_docx.renderer import DocxRenderer
+
+# Keep this string in sync with scripts/generate_fixtures.py and the manifest parser tests.
+PANDOC_FROM = (
+    "markdown+fenced_divs+pipe_tables+grid_tables+backtick_code_blocks"
+    "+raw_html+markdown_in_html_blocks+lists_without_preceding_blankline"
+)
 
 
 def run_pandoc_ast(markdown_text: str) -> Dict[str, Any]:
@@ -28,7 +35,7 @@ def run_pandoc_ast(markdown_text: str) -> Dict[str, Any]:
     cmd = [
         "pandoc",
         "-f",
-        "markdown+fenced_divs+pipe_tables+backtick_code_blocks+raw_html+lists_without_preceding_blankline",
+        PANDOC_FROM,
         "-t", "json",
     ]
     try:
@@ -39,11 +46,14 @@ def run_pandoc_ast(markdown_text: str) -> Dict[str, Any]:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=60,
         )
     except FileNotFoundError as e:
         raise ConvertError(
             "Pandoc executable not found in PATH. Please install pandoc: 'brew install pandoc'"
         ) from e
+    except subprocess.TimeoutExpired as e:
+        raise ConvertError("Pandoc AST parsing timed out after 60 seconds.") from e
 
     if proc.returncode != 0:
         raise ConvertError(f"Pandoc parsing failed with exit code {proc.returncode}:\n{proc.stderr}")
@@ -55,7 +65,7 @@ def run_pandoc_ast(markdown_text: str) -> Dict[str, Any]:
 
 
 MAX_INPUT_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB limit (R-11)
-_THREAD_LOCK = threading.Lock()
+_THREAD_LOCK = threading.RLock()
 
 
 @contextlib.contextmanager
@@ -88,7 +98,7 @@ def _publish_lock(lock_path: Path):
             os.close(lock_fd)
 
 
-def _assert_safe_media_dir(media: Path, in_file: Path, out_file: Path) -> None:
+def _assert_safe_media_dir(media: Path, in_file: Path, out_file: Path, template_path: Optional[Path] = None) -> None:
     forbidden = {
         in_file.parent.resolve(),
         PROJECT_ROOT.resolve(),
@@ -96,28 +106,82 @@ def _assert_safe_media_dir(media: Path, in_file: Path, out_file: Path) -> None:
         out_file.parent.resolve(),
         Path("/").resolve(),
     }
+    if template_path is not None:
+        forbidden.add(template_path.resolve())
     if media in forbidden:
         raise ConvertError(
             f"Refusing to use '{media}' as media_dir because it is the input folder, "
-            "project root, cwd, or output parent. Use a dedicated subdirectory."
+            "project root, cwd, output parent, or template directory. Use a dedicated subdirectory."
         )
 
 
 def _publish_diagrams(stage_media_dir: Path, target_media_dir: Path) -> None:
-    """Copy only managed diagram_*.png files; never rmtree the whole target directory."""
+    """Copy only managed diagram_*.png files with transactional backup and rollback (FINAL-11)."""
     target_media_dir.mkdir(parents=True, exist_ok=True)
-    incoming = sorted(stage_media_dir.glob("diagram_*.png"))
+    incoming = sorted([p for p in stage_media_dir.glob("diagram_*") if p.suffix.lower() in (".png", ".svg")])
     new_names = {src.name for src in incoming}
-    for src in incoming:
-        shutil.copy2(str(src), str(target_media_dir / (src.name + ".tmp")))
-    for src in incoming:
-        os.replace(str(target_media_dir / (src.name + ".tmp")), str(target_media_dir / src.name))
-    for old in target_media_dir.glob("diagram_*.png"):
-        if old.name not in new_names:
-            try:
-                old.unlink()
-            except OSError:
-                pass
+
+    backups: dict[str, Path] = {}
+    created_new: list[Path] = []
+    tmp_files: list[Path] = []
+
+    try:
+        # 1. Back up any existing files that will be replaced
+        for src in incoming:
+            target_dest = target_media_dir / src.name
+            if target_dest.exists():
+                bk = target_media_dir / f".backup_{src.name}_{uuid.uuid4().hex[:8]}"
+                shutil.copy2(str(target_dest), str(bk))
+                backups[src.name] = bk
+            else:
+                created_new.append(target_dest)
+
+        # 2. Stage new files with unique temporary names
+        for src in incoming:
+            tmp_target = target_media_dir / f".tmp_{src.name}_{uuid.uuid4().hex[:8]}"
+            tmp_files.append(tmp_target)
+            shutil.copy2(str(src), str(tmp_target))
+
+        # 3. Atomically replace targets with tmp files
+        for src, tmp_target in zip(incoming, tmp_files):
+            os.replace(str(tmp_target), str(target_media_dir / src.name))
+
+        # 4. Remove old diagrams no longer in the new set (with backup)
+        for old in [p for p in target_media_dir.glob("diagram_*") if p.suffix.lower() in (".png", ".svg")]:
+            if old.name not in new_names:
+                bk = target_media_dir / f".backup_{old.name}_{uuid.uuid4().hex[:8]}"
+                shutil.move(str(old), str(bk))
+                backups[old.name] = bk
+
+        # 5. Success: Clean up all backup files
+        for bk in backups.values():
+            if bk.exists():
+                try:
+                    bk.unlink()
+                except OSError:
+                    pass
+
+    except Exception:
+        # Rollback on failure: clean tmp files, remove newly created files, restore backups
+        for tmp_target in tmp_files:
+            if tmp_target.exists():
+                try:
+                    tmp_target.unlink()
+                except OSError:
+                    pass
+        for new_p in created_new:
+            if new_p.exists():
+                try:
+                    new_p.unlink()
+                except OSError:
+                    pass
+        for orig_name, bk in backups.items():
+            if bk.exists():
+                try:
+                    os.replace(str(bk), str(target_media_dir / orig_name))
+                except OSError:
+                    pass
+        raise
 
 
 def convert_markdown_to_docx(
@@ -129,6 +193,7 @@ def convert_markdown_to_docx(
     overwrite: bool = True,
     content: Optional[str] = None,
     base_dir: Optional[str | Path] = None,
+    warnings: Optional[List[str]] = None,
 ) -> Path:
     """
     Executes the full conversion pipeline from Markdown to styled DOCX.
@@ -166,8 +231,12 @@ def convert_markdown_to_docx(
         raw_text = in_file.read_text(encoding="utf-8")
 
     out_file = Path(output_path).resolve()
-    if out_file == in_file:
+    if out_file == in_file or (out_file.exists() and in_file.exists() and os.path.samefile(out_file, in_file)):
         raise ValueError("Output path cannot be identical to input path.")
+    if out_file.suffix.lower() != ".docx":
+        raise ConvertError(
+            f"Output file must have a .docx extension, got '{out_file.suffix or out_file.name}'."
+        )
     if out_file.is_dir():
         raise IsADirectoryError(f"Output path '{out_file}' is a directory, not a regular file.")
 
@@ -186,6 +255,11 @@ def convert_markdown_to_docx(
         tmpl = template
     else:
         tmpl = Template.load(template)
+
+    if tmpl.shell_docx_path and (out_file == tmpl.shell_docx_path or (out_file.exists() and tmpl.shell_docx_path.exists() and os.path.samefile(out_file, tmpl.shell_docx_path))):
+        raise ConvertError("Output path cannot overwrite template shell file.")
+    if tmpl.dir_path and (out_file == tmpl.dir_path or tmpl.dir_path in out_file.parents):
+        raise ConvertError("Output path cannot be inside the template directory.")
 
     # 2. Stage conversion in an isolated temporary directory (R-02 / R-04)
     # Prefer staging within the same filesystem as out_file for atomic os.replace
@@ -216,6 +290,11 @@ def convert_markdown_to_docx(
         # 5. Initialize Renderer and Translate AST to DOCX
         renderer = DocxRenderer(template=tmpl, base_dir=in_file.parent)
         ast_to_docx(ast_data, renderer)
+        if renderer.warnings:
+            if warnings is not None:
+                warnings.extend(renderer.warnings)
+            for warning in renderer.warnings:
+                sys.stderr.write(f"Warning: {warning}\n")
 
         # 6. Save to staged DOCX file first
         renderer.doc.save(str(stage_docx))
@@ -223,10 +302,19 @@ def convert_markdown_to_docx(
         # 7. Publish DOCX; only managed diagram_*.png files are written to media_dir (FIN-01)
         target_media_dir = Path(media_dir).resolve() if media_dir else out_file.parent / f"{out_file.stem}_media"
         if media_dir is not None:
-            _assert_safe_media_dir(target_media_dir, in_file, out_file)
-        lock_path = out_file.parent / f".{out_file.stem}.publish.lock"
+            _assert_safe_media_dir(target_media_dir, in_file, out_file, template_path=tmpl.dir_path)
 
-        with _publish_lock(lock_path):
+        locks_to_acquire = [out_file.parent / f".{out_file.stem}.publish.lock"]
+        if n_diagrams > 0:
+            target_media_dir.mkdir(parents=True, exist_ok=True)
+            media_lock = target_media_dir / ".media_publish.lock"
+            if media_lock not in locks_to_acquire:
+                locks_to_acquire.append(media_lock)
+        locks_to_acquire.sort(key=lambda p: str(p.resolve()))
+
+        with contextlib.ExitStack() as stack:
+            for lp in locks_to_acquire:
+                stack.enter_context(_publish_lock(lp))
             if out_file.exists() and not overwrite:
                 raise ConvertError(
                     f"Output file '{out_file}' already exists. Pass overwrite=True or --overwrite."

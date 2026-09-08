@@ -10,6 +10,36 @@ from docx.document import Document
 NSMAP = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 
+def _paragraph_is_rtl(paragraph: Paragraph) -> bool:
+    pPr = paragraph._p.find(qn("w:pPr"))
+    if pPr is None:
+        return False
+    bidi = pPr.find(qn("w:bidi"))
+    if bidi is None:
+        return False
+    return bidi.get(qn("w:val"), "1") != "0"
+
+
+def word_safe_jc(align: str, rtl: bool) -> str:
+    """Map logical alignment to ST_Jc values Word accepts (left/right/center/both).
+
+    ``start`` / ``end`` are not in the Word transitional ST_Jc enum; Word for
+    Windows/Mac often refuses to open the package when they appear.
+    """
+    raw = (align or "both").strip().lower()
+    if raw in ("both", "justify"):
+        return "both"
+    if raw == "center":
+        return "center"
+    if raw == "start":
+        return "right" if rtl else "left"
+    if raw == "end":
+        return "left" if rtl else "right"
+    if raw in ("left", "right"):
+        return raw
+    return "both"
+
+
 def set_paragraph_bidi(paragraph: Paragraph, bidi: bool = True) -> None:
     """Sets <w:bidi w:val="1|0"/>. Removing the element is not the same as val=0 (style inheritance)."""
     pPr = paragraph._p.get_or_add_pPr()
@@ -21,16 +51,13 @@ def set_paragraph_bidi(paragraph: Paragraph, bidi: bool = True) -> None:
 
 
 def set_paragraph_align(paragraph: Paragraph, align: str = "both") -> None:
-    """
-    Sets paragraph justification/alignment: 'both' (justify), 'start', 'center', 'end'.
-    Note: 'start' in RTL aligns visually to the right without the bidi flipping bug.
-    """
+    """Sets paragraph justification using Word-safe ST_Jc values (left/right/center/both)."""
     pPr = paragraph._p.get_or_add_pPr()
     existing_jc = pPr.find(qn("w:jc"))
     if existing_jc is not None:
         pPr.remove(existing_jc)
     jc = OxmlElement("w:jc")
-    jc.set(qn("w:val"), align)
+    jc.set(qn("w:val"), word_safe_jc(align, rtl=_paragraph_is_rtl(paragraph)))
     pPr.append(jc)
 
 

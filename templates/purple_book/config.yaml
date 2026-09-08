@@ -10,39 +10,89 @@ fonts:
   code: Courier New
 font_files:
   Vazirmatn: fonts/Vazirmatn-Regular.ttf
+  Vazirmatn-Bold: fonts/Vazirmatn-Bold.ttf
 page:
   size: A4
-  margin_cm: { top: 2.0, bottom: 2.0, left: 2.0, right: 2.0 }
+  margin_cm:
+    top: 2.0
+    bottom: 2.0
+    left: 2.0
+    right: 2.0
+  paragraph_align: both
+  space_after_pt: 6.0
 colors:
-  primary: "6B2FA0"
-  primary_dark: "4A156D"
-  on_primary: "FFFFFF"
-  quote_bg: "ECE4F1"
-  warning_bg: "FBF7F4"
-  warning_title: "8B6914"
-  body: "2D2D2D"
-  caption: "5A5A5A"
+  primary: 6B2FA0
+  primary_dark: 4A156D
+  on_primary: FFFFFF
+  quote_bg: ECE4F1
+  warning_bg: FBF7F4
+  warning_title: 8B6914
+  body: 2D2D2D
+  caption: 5A5A5A
 headings:
   extract_number: true
   badge: true
-  h1: { size_pt: 16, badge_bg: primary, badge_fg: on_primary }
-  h2: { size_pt: 14, badge_bg: primary, badge_fg: on_primary }
-  h3: { size_pt: 13, badge_bg: primary, badge_fg: on_primary }
+  h1:
+    size_pt: 16
+    badge_bg: primary
+    badge_fg: on_primary
+  h2:
+    size_pt: 14
+    badge_bg: primary
+    badge_fg: on_primary
+  h3:
+    size_pt: 13
+    badge_bg: primary
+    badge_fg: on_primary
 callouts:
   note:
-    classes: [note]
+    classes:
+    - note
     default_title: نکته
-    icon: "◆"
+    icon: ◆
     header_bg: primary_dark
     header_fg: on_primary
-    body_bg: "F7F3FB"
+    body_bg: F7F3FB
   warning:
-    classes: [warning]
+    classes:
+    - warning
     default_title: هشدار
-    icon: ""
+    icon: ''
     header_bg: warning_bg
     header_fg: warning_title
     body_bg: warning_bg
+  overview:
+    classes:
+    - overview
+    default_title: ''
+    icon: ''
+    header_bg: primary_dark
+    header_fg: on_primary
+    body_bg: F5EFFB
+  important:
+    classes:
+    - important
+    default_title: توجه مهم
+    icon: '!'
+    header_bg: warning_bg
+    header_fg: warning_title
+    body_bg: FDF8F0
+  lab:
+    classes:
+    - lab
+    default_title: یادداشت تمرین
+    icon: ◆
+    header_bg: primary_dark
+    header_fg: on_primary
+    body_bg: F0F4F8
+  editorial:
+    classes:
+    - editorial
+    default_title: پیشنهاد تصویر
+    icon: ◆
+    header_bg: ECEFF1
+    header_fg: caption
+    body_bg: F8F9FA
 quotes:
   border_side: physical_right
   border_pt: 12
@@ -54,8 +104,8 @@ tables:
   bidi_visual: true
 code_block:
   theme: friendly
-  bg: "F6F8FA"
-  border_color: "D0D7DE"
+  bg: F6F8FA
+  border_color: D0D7DE
   border_sz: 4
   font_size_pt: 9.5
   line_spacing: 1.15
@@ -66,3 +116,12 @@ mermaid:
   theme_file: mermaid.json
   css_file: mermaid.css
   puppeteer_config: puppeteer.json
+custom_styles:
+  chapter overview: overview
+  dba note: note
+  important note: important
+  warning: warning
+  lab note: lab
+  screenshot recommendation: editorial
+caption:
+  size_pt: 9.5

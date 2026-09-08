@@ -4,9 +4,17 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Tuple
+
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
 
 from md_to_docx.template import Template, PROJECT_ROOT
 
@@ -128,6 +136,130 @@ def extract_mermaid_blocks(markdown_text: str) -> List[MermaidBlock]:
 
 
 MERMAID_TIMEOUT_SECONDS = 60.0
+
+_LAUNCH_LOCK = threading.RLock()
+_LAUNCH_HEALTH: dict = {"ok": None, "error": None, "binary": None}
+
+
+class _ProcessFileLock:
+    def __init__(self, path: Path):
+        self.path = path
+        self._fd = None
+
+    def __enter__(self):
+        if not HAS_FCNTL:
+            return self
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._fd = open(self.path, "a+")
+            fcntl.flock(self._fd.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            self._fd = None
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._fd is not None:
+            try:
+                fcntl.flock(self._fd.fileno(), fcntl.LOCK_UN)
+                self._fd.close()
+            except OSError:
+                pass
+            self._fd = None
+
+
+def _health_file_path() -> Optional[Path]:
+    raw = os.environ.get("MD2DOCX_MERMAID_HEALTH_FILE", "").strip()
+    return Path(raw) if raw else None
+
+
+def _launch_file_lock() -> _ProcessFileLock:
+    path = _health_file_path()
+    if path:
+        lock_path = path.with_suffix(".lock")
+    else:
+        lock_path = Path(tempfile.gettempdir()) / f"md2docx_mermaid_{os.getuid() if hasattr(os, 'getuid') else 0}.lock"
+    return _ProcessFileLock(lock_path)
+
+
+def _persist_launch_health() -> None:
+    path = _health_file_path()
+    if not path:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_fd, temp_path = tempfile.mkstemp(dir=str(path.parent), prefix=".health_tmp_")
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "ok": _LAUNCH_HEALTH.get("ok"),
+                    "error": _LAUNCH_HEALTH.get("error"),
+                    "binary": _LAUNCH_HEALTH.get("binary"),
+                    "timestamp": time.time(),
+                    "pid": os.getpid(),
+                },
+                f,
+            )
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, str(path))
+    except OSError:
+        return
+
+
+def _load_shared_launch_health() -> None:
+    path = _health_file_path()
+    if not path or not path.is_file():
+        return
+    try:
+        raw = path.read_text(encoding="utf-8")
+        if not raw.strip():
+            return
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return
+    if isinstance(data, dict) and data.get("ok") is False:
+        _LAUNCH_HEALTH["ok"] = False
+        _LAUNCH_HEALTH["error"] = data.get("error")
+        _LAUNCH_HEALTH["binary"] = data.get("binary")
+
+
+def reset_launch_health() -> None:
+    """Test helper: clear the process-wide Mermaid launch circuit breaker."""
+    with _LAUNCH_LOCK:
+        with _launch_file_lock():
+            _LAUNCH_HEALTH["ok"] = None
+            _LAUNCH_HEALTH["error"] = None
+            _LAUNCH_HEALTH["binary"] = None
+            path = _health_file_path()
+            if path and path.is_file():
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+
+
+def record_launch_failure(message: str, binary: Optional[str] = None) -> None:
+    with _LAUNCH_LOCK:
+        _LAUNCH_HEALTH["ok"] = False
+        _LAUNCH_HEALTH["error"] = message
+        _LAUNCH_HEALTH["binary"] = binary
+        _persist_launch_health()
+
+
+def mermaid_launch_blocked() -> Optional[str]:
+    with _LAUNCH_LOCK:
+        _load_shared_launch_health()
+        if _LAUNCH_HEALTH["ok"] is False:
+            return str(_LAUNCH_HEALTH["error"] or "previous Mermaid browser launch failed")
+    return None
+
+
+def record_launch_success(binary: Optional[str] = None) -> None:
+    with _LAUNCH_LOCK:
+        _LAUNCH_HEALTH["ok"] = True
+        _LAUNCH_HEALTH["error"] = None
+        _LAUNCH_HEALTH["binary"] = binary
+        _persist_launch_health()
 
 
 def probe_mermaid_renderer(
@@ -298,7 +430,8 @@ def _browsers_in_puppeteer_cache() -> List[str]:
     found_fallback.sort(key=_chrome_version_key, reverse=True)
     result: List[str] = []
     seen: set[str] = set()
-    for path in found_full + found_fallback:
+    # Prefer chrome-headless-shell: full Chrome can abort via TransformProcessType on macOS (F01).
+    for path in found_fallback + found_full:
         resolved = str(path.resolve())
         if resolved not in seen:
             seen.add(resolved)
@@ -322,8 +455,12 @@ def _system_browser_candidates() -> List[str]:
     ]
 
 
+def _allow_system_browser() -> bool:
+    return os.environ.get("MD2DOCX_ALLOW_SYSTEM_BROWSER", "").strip().lower() in {"1", "true", "yes"}
+
+
 def _iter_browser_candidates() -> List[str]:
-    """Preference order: env override, Puppeteer cache, PATH, then system apps."""
+    """Managed Puppeteer cache first. System Chrome/Edge are opt-in only (F01)."""
     seen: set[str] = set()
     ordered: List[str] = []
 
@@ -339,22 +476,32 @@ def _iter_browser_candidates() -> List[str]:
         seen.add(key)
         ordered.append(key)
 
-    add(os.environ.get("PUPPETEER_EXECUTABLE_PATH"))
+    explicit = os.environ.get("PUPPETEER_EXECUTABLE_PATH")
+    if explicit:
+        path = Path(explicit)
+        if not path.is_file():
+            raise ConvertError(
+                f"Explicit PUPPETEER_EXECUTABLE_PATH '{explicit}' is not a usable browser binary. "
+                "No fallback to other browsers is performed."
+            )
+        return [str(path.resolve())]
+
     for cached in _browsers_in_puppeteer_cache():
         add(cached)
-    for bin_name in (
-        "google-chrome",
-        "google-chrome-stable",
-        "chromium",
-        "chromium-browser",
-        "chrome",
-        "brave-browser",
-        "microsoft-edge",
-        "msedge",
-    ):
-        add(shutil.which(bin_name))
-    for candidate in _system_browser_candidates():
-        add(candidate)
+    if _allow_system_browser():
+        for bin_name in (
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+            "chrome",
+            "brave-browser",
+            "microsoft-edge",
+            "msedge",
+        ):
+            add(shutil.which(bin_name))
+        for candidate in _system_browser_candidates():
+            add(candidate)
     return ordered
 
 
@@ -378,10 +525,11 @@ def _find_mmdc_cmd() -> List[str]:
     if system_mmdc:
         return [system_mmdc]
 
-    if shutil.which("npx"):
-        return ["npx", "-y", "@mermaid-js/mermaid-cli"]
-
-    return ["mmdc"]
+    raise ConvertError(
+        "Mermaid CLI (mmdc) was not found. Install project Node dependencies with "
+        "'npm ci' (see package-lock.json) or scripts/bootstrap.sh. "
+        "Floating 'npx -y @mermaid-js/mermaid-cli' is not used."
+    )
 
 
 def _headless_mode_for_browser(browser_bin: Optional[str]):
@@ -427,6 +575,14 @@ def _get_puppeteer_config_path(template: Template, work_dir: Path, browser_bin: 
     return runtime_cfg
 
 
+_MERMAID_OVERFLOW_CSS = (
+    "\n.node foreignObject { overflow: visible !important; }\n"
+    ".node foreignObject div { overflow: visible !important; padding: 4px 8px !important; text-align: center; }\n"
+    ".label text { overflow: visible !important; }\n"
+    ".edgeLabel { overflow: visible !important; }\n"
+)
+
+
 def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]:
     """Builds CSS with an absolute @font-face so Chromium can load the configured font."""
     body_font = template.fonts.get("body", "Vazirmatn")
@@ -445,9 +601,10 @@ def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]
     if template.mermaid_css_path and template.mermaid_css_path.exists():
         base_css = template.mermaid_css_path.read_text(encoding="utf-8")
 
+    css_parts: List[str] = []
     if font_file and font_file.exists():
         font_url = font_file.resolve().as_uri()
-        font_face = (
+        css_parts.append(
             "@font-face {\n"
             f"  font-family: '{body_font}';\n"
             f"  src: url('{font_url}') format('truetype');\n"
@@ -455,6 +612,17 @@ def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]
             "  font-style: normal;\n"
             "}\n"
         )
+        bold_rel = template.font_files.get(f"{body_font}-Bold") or template.font_files.get("Vazirmatn-Bold")
+        bold_file = (template.dir_path / bold_rel) if bold_rel else template.dir_path / "fonts" / f"{body_font}-Bold.ttf"
+        if bold_file.exists():
+            css_parts.append(
+                "@font-face {\n"
+                f"  font-family: '{body_font}';\n"
+                f"  src: url('{bold_file.resolve().as_uri()}') format('truetype');\n"
+                "  font-weight: 700;\n"
+                "  font-style: normal;\n"
+                "}\n"
+            )
         # Drop the relative @font-face from the template CSS; Chromium cannot resolve it.
         stripped = []
         skip = False
@@ -466,18 +634,20 @@ def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]
                     skip = False
                 continue
             stripped.append(line)
-        css_text = (
-            font_face
-            + "\n".join(stripped).strip()
-            + f"\nbody, svg, text, .node, .edgeLabel, .label {{ font-family: '{body_font}', Tahoma, sans-serif !important; }}\n"
+        css_parts.append("\n".join(stripped).strip())
+        css_parts.append(
+            f"\nbody, svg, text, .node, .edgeLabel, .label {{ font-family: '{body_font}', Tahoma, sans-serif !important; }}\n"
         )
-        out = work_dir / "mermaid-runtime.css"
-        out.write_text(css_text, encoding="utf-8")
-        return out
+    else:
+        css_parts.append(base_css)
 
-    if template.mermaid_css_path and template.mermaid_css_path.exists():
-        return template.mermaid_css_path
-    return None
+    css_parts.append(_MERMAID_OVERFLOW_CSS)
+    css_text = "".join(css_parts).strip() + "\n"
+    if not css_text.strip():
+        return None
+    out = work_dir / "mermaid-runtime.css"
+    out.write_text(css_text, encoding="utf-8")
+    return out
 
 
 _LAUNCH_ERROR_HINTS = (
@@ -553,24 +723,225 @@ def _run_mmdc(
                 f"Mermaid CLI executable not found: {e}. Run 'npm install' or 'scripts/bootstrap.sh' to install dependencies."
             ) from e
 
-    if proc.returncode != 0:
-        err_msg = proc.stderr.strip() or proc.stdout.strip()
-        browser_info = browser_bin if browser_bin else "None found"
-        raise ConvertError(
-            f"Mermaid compilation failed with exit code {proc.returncode}:\n"
-            f"{err_msg}\n"
-            f"Detected browser executable: {browser_info}\n"
-            "Troubleshooting:\n"
-            "  1. Ensure Google Chrome or Chromium is installed.\n"
-            "  2. Or set PUPPETEER_EXECUTABLE_PATH to your browser binary.\n"
-            "  3. Or install Chromium via: npx puppeteer browsers install chrome\n"
-            "  4. Run 'npm install' or 'scripts/bootstrap.sh' to set up all dependencies."
-        )
+        if proc.returncode != 0:
+            err_msg = proc.stderr.strip() or proc.stdout.strip()
+            browser_info = browser_bin if browser_bin else "None found"
+            raise ConvertError(
+                f"Mermaid compilation failed with exit code {proc.returncode}:\n"
+                f"{err_msg}\n"
+                f"Detected browser executable: {browser_info}\n"
+                "Troubleshooting:\n"
+                "  1. Install project Node deps with 'npm ci' (Node >= 22.12.0) and "
+                "'npx puppeteer browsers install chrome-headless-shell' (or chrome).\n"
+                "  2. Set PUPPETEER_EXECUTABLE_PATH only for an explicit managed binary; "
+                "an invalid override does not fall back to system Chrome.\n"
+                "  3. System Chrome/Edge are opt-in via MD2DOCX_ALLOW_SYSTEM_BROWSER=1.\n"
+                "  4. Run scripts/bootstrap.sh for a supported setup. Do not use 'npx -y'."
+            )
 
-    if not output_path.exists() or output_path.stat().st_size == 0:
-        raise ConvertError("Mermaid compilation produced empty or missing image file.")
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise ConvertError("Mermaid compilation produced empty or missing image file.")
+
+        if not validate_rendered_diagram_image(output_path):
+            raise ConvertError(
+                f"Mermaid compilation produced an empty or solid-color placeholder image at {output_path}."
+            )
+
+        if output_path.suffix.lower() == ".png":
+            svg_path = output_path.with_suffix(".svg")
+            cmd_svg = (
+                list(mmdc_cmd)
+                + [
+                    "-i", str(temp_mmd),
+                    "-o", str(svg_path),
+                    "-s", str(template.mermaid.get("scale", 3)),
+                    "-b", "white",
+                ]
+            )
+            if template.mermaid_theme_path and template.mermaid_theme_path.exists():
+                cmd_svg.extend(["-c", str(template.mermaid_theme_path)])
+            if css_path:
+                cmd_svg.extend(["-C", str(css_path)])
+            cmd_svg.extend(["-p", str(puppeteer_cfg)])
+            try:
+                svg_proc = subprocess.run(
+                    cmd_svg,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                    env=env,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as e:
+                raise ConvertError(
+                    f"Mermaid SVG sidecar timed out after {timeout} seconds at {svg_path}."
+                ) from e
+            if (
+                svg_proc.returncode != 0
+                or not svg_path.is_file()
+                or svg_path.stat().st_size == 0
+            ):
+                err = (svg_proc.stderr or svg_proc.stdout or "").strip()
+                raise ConvertError(
+                    f"Mermaid PNG succeeded but SVG sidecar was not produced at {svg_path}. {err}"
+                )
 
     return output_path
+
+
+def validate_rendered_diagram_image(image_path: Path) -> bool:
+    """Verifies that the rendered diagram is not a flat solid-color rectangle or bordered placeholder (E01)."""
+    if str(image_path).lower().endswith(".svg"):
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(image_path)
+            root = tree.getroot()
+            return len(list(root.iter())) > 5
+        except Exception:
+            return False
+
+    try:
+        from PIL import Image, ImageStat
+        with Image.open(image_path) as im:
+            rgb = im.convert("RGB")
+            if rgb.width < 10 or rgb.height < 10:
+                return False
+            stat = ImageStat.Stat(rgb)
+            # If all color channels have essentially 0 stddev, it's a flat solid rectangle
+            if all(s < 0.2 for s in stat.stddev):
+                return False
+
+            # Check inner region (inset by 10% margins) to catch bordered empty placeholders
+            w, h = rgb.width, rgb.height
+            if w >= 20 and h >= 20:
+                inset_box = (int(w * 0.1), int(h * 0.1), int(w * 0.9), int(h * 0.9))
+                inner = rgb.crop(inset_box)
+                inner_stat = ImageStat.Stat(inner)
+                if all(s < 0.2 for s in inner_stat.stddev):
+                    return False
+    except Exception:
+        return False
+    return True
+
+
+def _clean_mermaid_delimiters(s: str) -> str:
+    """Strips matched outer quotes and brackets/parentheses pairs without stripping inner parens."""
+    s = s.strip()
+    pairs = [
+        ("[(", ")]"),
+        ("([", "])"),
+        ("[[", "]]"),
+        ("((", "))"),
+        ("{{", "}}"),
+        ("(", ")"),
+        ("[", "]"),
+        ("{", "}"),
+    ]
+    changed = True
+    while changed:
+        changed = False
+        if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+            s = s[1:-1].strip()
+            changed = True
+        for opening, closing in pairs:
+            if s.startswith(opening) and s.endswith(closing):
+                s = s[len(opening):-len(closing)].strip()
+                changed = True
+                break
+    return s
+
+
+def extract_mermaid_source_labels(code: str) -> List[str]:
+    """Extract visible node/edge labels from Mermaid source (no browser)."""
+    labels: List[str] = []
+
+    def _add(raw: str) -> None:
+        cleaned = _clean_mermaid_delimiters(raw)
+        if cleaned and cleaned != "*" and "\n" not in cleaned and cleaned not in labels:
+            labels.append(cleaned)
+
+    # 1. Edge/transition descriptions after colon (e.g. sequence diagram messages, state transitions)
+    for m in re.finditer(r":\s*([^\n]+)", code or ""):
+        text = m.group(1).strip()
+        if text and text != "*" and "\n" not in text:
+            if re.search(r"[\u0600-\u06FF]", text) or " " in text:
+                _add(text)
+
+    # 2. Node shapes and bracketed labels
+    for pattern in (
+        r"\[([^\]]+)\]",
+        r"\(([^)]+)\)",
+        r"\{([^}]+)\}",
+        r"[|]([^|]+)[|]",
+        r'["\']([^"\']+)["\']',
+    ):
+        for m in re.finditer(pattern, code or ""):
+            text = m.group(1).strip()
+            if not text or text == "*" or "\n" in text:
+                continue
+            if text.count('"') % 2 != 0 or text.count("'") % 2 != 0:
+                continue
+            cleaned = _clean_mermaid_delimiters(text)
+            if not re.fullmatch(r"[\w.-]+", cleaned) or " " in cleaned or re.search(r"[\u0600-\u06FF]", cleaned):
+                _add(text)
+
+    # 3. Aliases (e.g. participant X as Y)
+    for m in re.finditer(r"\bas\s+([^\n]+)", code or ""):
+        text = m.group(1).strip()
+        if text and text != "*" and "\n" not in text:
+            _add(text)
+
+    # 4. Always keep bracket labels even if they look like identifiers (except state [*])
+    for m in re.finditer(r"\[([^\]]+)\]", code or ""):
+        text = m.group(1).strip()
+        if text and text != "*" and "\n" not in text:
+            _add(text)
+    return labels
+
+
+def extract_mermaid_svg_labels(svg_path_or_content: str | Path) -> List[str]:
+    """Extracts all text labels from a rendered Mermaid SVG diagram (G12)."""
+    if isinstance(svg_path_or_content, Path) or (
+        isinstance(svg_path_or_content, str)
+        and "\n" not in svg_path_or_content
+        and Path(svg_path_or_content).exists()
+    ):
+        content = Path(svg_path_or_content).read_text(encoding="utf-8")
+    else:
+        content = str(svg_path_or_content)
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(content)
+        labels = []
+        for el in root.iter():
+            tag = el.tag.split("}")[-1]
+            if tag in ("text", "tspan", "span", "p", "div") and el.text:
+                t = el.text.strip()
+                if t and t not in labels:
+                    labels.append(t)
+        return labels
+    except Exception:
+        return []
+
+
+def validate_mermaid_svg_labels(
+    svg_path_or_content: str | Path,
+    expected_labels: List[str],
+) -> Tuple[bool, List[str]]:
+    """
+    Verifies that all expected node labels are present in the rendered Mermaid SVG (G12 & M5).
+    Returns (passed, missing_labels).
+    """
+    extracted = extract_mermaid_svg_labels(svg_path_or_content)
+    missing = []
+    for exp in expected_labels:
+        exp_clean = _clean_mermaid_delimiters(exp)
+        if not exp_clean:
+            continue
+        if not any(exp_clean in act for act in extracted):
+            missing.append(exp_clean)
+    return (len(missing) == 0), missing
 
 
 def render_mermaid_to_png(
@@ -586,7 +957,15 @@ def render_mermaid_to_png(
     When browser_bin is omitted, launch/sandbox failures retry the next discovered browser.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    blocked = mermaid_launch_blocked()
+    if blocked:
+        raise ConvertError(f"Mermaid launch blocked after previous failure: {blocked}")
+
     if browser_bin:
+        if not Path(browser_bin).is_file():
+            raise ConvertError(
+                f"Explicit browser binary '{browser_bin}' is not a usable file. No fallback is performed."
+            )
         candidates: List[Optional[str]] = [browser_bin]
     else:
         found = _iter_browser_candidates()
@@ -594,12 +973,23 @@ def render_mermaid_to_png(
 
     last_error: Optional[ConvertError] = None
     for candidate in candidates:
-        try:
-            return _run_mmdc(mmd_code, output_path, template, timeout, candidate)
-        except ConvertError as e:
-            last_error = e
-            if browser_bin or not _is_browser_launch_error(str(e)):
-                raise
+        with _LAUNCH_LOCK:
+            with _launch_file_lock():
+                blocked = mermaid_launch_blocked()
+                if blocked:
+                    raise ConvertError(f"Mermaid launch blocked after previous failure: {blocked}")
+                try:
+                    result = _run_mmdc(mmd_code, output_path, template, timeout, candidate)
+                    record_launch_success(candidate)
+                    return result
+                except ConvertError as e:
+                    last_error = e
+                    if browser_bin or not _is_browser_launch_error(str(e)):
+                        if _is_browser_launch_error(str(e)):
+                            record_launch_failure(str(e), candidate)
+                        raise
+                    record_launch_failure(str(e), candidate)
+                    break
     if last_error:
         raise last_error
     raise ConvertError("Mermaid compilation failed: no browser candidate succeeded.")
@@ -710,10 +1100,40 @@ def process_mermaid_ast(
             return None
         return None
 
-    def walk(blocks: list) -> None:
+    def walk_table_rows(rows: list) -> None:
+        if not isinstance(rows, list):
+            return
+        for row in rows:
+            if isinstance(row, list) and len(row) > 1 and isinstance(row[1], list):
+                for cell in row[1]:
+                    if isinstance(cell, list) and len(cell) > 4 and isinstance(cell[4], list):
+                        walk_blocks(cell[4])
+
+    def walk_inlines(inlines: list) -> None:
+        if not isinstance(inlines, list):
+            return
+        for inl in inlines:
+            if not isinstance(inl, dict):
+                continue
+            it = inl.get("t")
+            ic = inl.get("c")
+            if it == "Note" and isinstance(ic, list):
+                walk_blocks(ic)
+            elif it in ("Span", "Link", "Image", "Quoted", "Cite") and isinstance(ic, list) and len(ic) > 1:
+                if isinstance(ic[1], list):
+                    walk_inlines(ic[1])
+            elif it in ("Emph", "Strong", "Strikeout", "Superscript", "Subscript", "Underline", "SmallCaps") and isinstance(ic, list):
+                walk_inlines(ic)
+
+    def walk_blocks(blocks: list) -> None:
+        if not isinstance(blocks, list):
+            return
         i = 0
         while i < len(blocks):
             b = blocks[i]
+            if not isinstance(b, dict):
+                i += 1
+                continue
             t = b.get("t")
             c = b.get("c")
             if t == "CodeBlock" and _codeblock_language(b) == "mermaid":
@@ -721,6 +1141,25 @@ def process_mermaid_ast(
                 counter["n"] += 1
                 img_path = output_dir / f"diagram_{counter['n']:03d}.png"
                 render(code, img_path, template)
+                svg_path = img_path.with_suffix(".svg")
+                if render_fn is None:
+                    if not svg_path.is_file() or svg_path.stat().st_size == 0:
+                        raise ConvertError(
+                            f"Mermaid SVG sidecar missing after render at {svg_path}"
+                        )
+                    expected_labels = extract_mermaid_source_labels(code)
+                    ok, missing = validate_mermaid_svg_labels(svg_path, expected_labels)
+                    if not ok:
+                        raise ConvertError(
+                            f"Mermaid SVG at {svg_path} is missing expected labels: {missing}"
+                        )
+                elif svg_path.is_file():
+                    expected_labels = extract_mermaid_source_labels(code)
+                    ok, missing = validate_mermaid_svg_labels(svg_path, expected_labels)
+                    if not ok:
+                        raise ConvertError(
+                            f"Mermaid SVG at {svg_path} is missing expected labels: {missing}"
+                        )
                 caption = consume_caption(blocks, i)
                 kvs = [["caption", caption]] if caption else []
                 img_node = {
@@ -736,21 +1175,56 @@ def process_mermaid_ast(
                 }
                 i += 1
                 continue
-            if t == "Div" and isinstance(c, list) and len(c) > 1 and isinstance(c[1], list):
-                walk(c[1])
+            if t in ("Para", "Plain") and isinstance(c, list):
+                walk_inlines(c)
+            elif t == "Header" and isinstance(c, list) and len(c) > 2 and isinstance(c[2], list):
+                walk_inlines(c[2])
+            elif t == "Div" and isinstance(c, list) and len(c) > 1 and isinstance(c[1], list):
+                walk_blocks(c[1])
             elif t == "BlockQuote" and isinstance(c, list):
-                walk(c)
+                walk_blocks(c)
             elif t in ("BulletList",) and isinstance(c, list):
                 for item in c:
                     if isinstance(item, list):
-                        walk(item)
+                        walk_blocks(item)
             elif t == "OrderedList" and isinstance(c, list) and len(c) > 1 and isinstance(c[1], list):
                 for item in c[1]:
                     if isinstance(item, list):
-                        walk(item)
-            elif t == "Note" and isinstance(c, list):
-                walk(c)
+                        walk_blocks(item)
+            elif t == "DefinitionList" and isinstance(c, list):
+                for item in c:
+                    if isinstance(item, list) and len(item) > 1:
+                        if isinstance(item[0], list):
+                            walk_inlines(item[0])
+                        if isinstance(item[1], list):
+                            for def_blocks in item[1]:
+                                if isinstance(def_blocks, list):
+                                    walk_blocks(def_blocks)
+            elif t == "Table" and isinstance(c, list) and len(c) > 5:
+                # caption blocks
+                if len(c) > 1 and isinstance(c[1], list) and len(c[1]) > 1 and isinstance(c[1][1], list):
+                    walk_blocks(c[1][1])
+                # head rows
+                if len(c) > 3 and isinstance(c[3], list) and len(c[3]) > 1 and isinstance(c[3][1], list):
+                    walk_table_rows(c[3][1])
+                # tbodies
+                if len(c) > 4 and isinstance(c[4], list):
+                    for tbody in c[4]:
+                        if isinstance(tbody, list):
+                            if len(tbody) > 2 and isinstance(tbody[2], list):
+                                walk_table_rows(tbody[2])
+                            if len(tbody) > 3 and isinstance(tbody[3], list):
+                                walk_table_rows(tbody[3])
+                # tfoot rows
+                if len(c) > 5 and isinstance(c[5], list) and len(c[5]) > 1 and isinstance(c[5][1], list):
+                    walk_table_rows(c[5][1])
+            elif t == "Figure" and isinstance(c, list) and len(c) > 2 and isinstance(c[2], list):
+                walk_blocks(c[2])
+            elif t == "LineBlock" and isinstance(c, list):
+                for line in c:
+                    if isinstance(line, list):
+                        walk_inlines(line)
             i += 1
 
-    walk(ast_dict.get("blocks") or [])
+    walk_blocks(ast_dict.get("blocks") or [])
     return counter["n"]

@@ -35,6 +35,19 @@ DEFAULT_TITLES = {
 }
 
 
+def _split_prefix(line: str) -> tuple[str, str, int]:
+    m = re.match(r"^([ ]{0,3}>[ \t]?)+", line)
+    if m:
+        prefix = line[:m.end()]
+        rest = line[m.end():]
+        return prefix, rest, prefix.count(">")
+    return "", line, 0
+
+
+def _escape_title(title: str) -> str:
+    return title.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def preprocess_admonitions(
     markdown_text: str,
     default_titles: Optional[Dict[str, str]] = None
@@ -43,8 +56,8 @@ def preprocess_admonitions(
     Transforms `::: note [title]` and GFM `> [!NOTE] [title]` into
     `::: {.note title="[title]"}` so pandoc produces a Div with class and title attribute.
 
-    Code fences (backtick/tilde) are skipped so literal `::: note` inside a code block
-    is left unchanged.
+    Code fences (backtick/tilde) at document root or within blockquotes/lists are skipped
+    so literal callout syntax inside code blocks remains untouched (FINAL-04).
     """
     titles = dict(DEFAULT_TITLES)
     if default_titles:
@@ -54,22 +67,28 @@ def preprocess_admonitions(
     transformed_lines = []
     i = 0
     num_lines = len(lines)
-    fence_stack: list[tuple[str, int]] = []
+    fence_stack: list[tuple[str, int, int]] = []
 
     while i < num_lines:
         line = lines[i]
-        fm = FENCE_LINE.match(line)
+        prefix, rest, q_depth = _split_prefix(line)
+        fm = FENCE_LINE.match(rest)
+
         if fm:
             fence = fm.group("fence")
             info = (fm.group("info") or "").strip()
             if fence_stack:
-                top_ch, top_n = fence_stack[-1]
-                if fence[0] == top_ch and len(fence) >= top_n and not info:
+                top_ch, top_n, top_d = fence_stack[-1]
+                if q_depth == top_d and fence[0] == top_ch and len(fence) >= top_n and not info:
                     fence_stack.pop()
-                transformed_lines.append(line)
-                i += 1
-                continue
-            fence_stack.append((fence[0], len(fence)))
+                    transformed_lines.append(line)
+                    i += 1
+                    continue
+                if q_depth >= top_d:
+                    transformed_lines.append(line)
+                    i += 1
+                    continue
+            fence_stack.append((fence[0], len(fence), q_depth))
             transformed_lines.append(line)
             i += 1
             continue
@@ -85,7 +104,7 @@ def preprocess_admonitions(
             cls = GFM_CLASS_MAP.get(raw_type, raw_type)
             raw_title = gfm_match.group("title")
             title = raw_title.strip() if raw_title else titles.get(cls, cls.capitalize())
-            escaped_title = title.replace('"', '\\"')
+            escaped_title = _escape_title(title)
 
             callout_body: list[str] = []
             i += 1
@@ -104,7 +123,7 @@ def preprocess_admonitions(
             cls = match.group("cls")
             raw_title = match.group("title")
             title = raw_title.strip() if raw_title else titles.get(cls, cls)
-            escaped_title = title.replace('"', '\\"')
+            escaped_title = _escape_title(title)
             transformed_lines.append(f'::: {{.{cls} title="{escaped_title}"}}')
         else:
             transformed_lines.append(line)

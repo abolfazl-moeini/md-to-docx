@@ -49,17 +49,29 @@ else
 fi
 echo "✔ Python dependencies installed."
 
-# 3. Check and setup Node.js & npm
+# 3. Check and setup Node.js & npm (Node >= 22.12.0 required for Mermaid CLI)
+if command -v node >/dev/null 2>&1; then
+    NODE_VER=$(node -v | sed 's/^v//')
+    NODE_MAJOR=$(echo "$NODE_VER" | cut -d. -f1)
+    NODE_MINOR=$(echo "$NODE_VER" | cut -d. -f2)
+    if [ "$NODE_MAJOR" -lt 22 ] || ([ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 12 ]); then
+        echo "⚠ Warning: Node.js >= 22.12.0 is required for Mermaid CLI (found v${NODE_VER})."
+    else
+        echo "✔ Found compatible Node.js: v${NODE_VER}"
+    fi
+fi
+
 if command -v npm >/dev/null 2>&1; then
-    echo "Installing Node.js dependencies via npm..."
-    npm ci || npm install
+    echo "Installing Node.js dependencies strictly from package-lock.json..."
+    npm ci
     echo "✔ Node.js dependencies installed."
 
-    # Install Chromium browser for Puppeteer if not available
-    echo "Checking Puppeteer Chromium installation..."
-    npx puppeteer browsers install chrome || echo "Notice: System Chrome/Chromium can be used as fallback."
+    # Install managed chrome-headless-shell browser for Puppeteer
+    echo "Checking Puppeteer chrome-headless-shell browser runtime..."
+    npx puppeteer browsers install chrome-headless-shell
+    echo "✔ Puppeteer browser runtime installed."
 else
-    echo "⚠ Warning: 'npm' not found in PATH. Mermaid rendering via mmdc requires Node.js."
+    echo "⚠ Warning: 'npm' not found in PATH. Mermaid rendering via mmdc requires Node.js >= 22.12.0."
 fi
 
 # 4. Check Pandoc

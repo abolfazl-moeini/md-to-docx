@@ -29,6 +29,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install Pandoc
+        run: sudo apt-get update && sudo apt-get install -y pandoc
       - name: Install package and test wheel assets
         run: pip install -c constraints.txt -e ".[dev]" && python -m pytest tests/test_smoke.py -q -rs
 
@@ -43,15 +45,15 @@ jobs:
           python-version: "3.11"
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Install Pandoc & LibreOffice
         run: |
           sudo apt-get update
           sudo apt-get install -y pandoc libreoffice-writer
       - name: Install Node from lockfile
         run: npm ci
-      - name: Install Puppeteer Chromium
-        run: npx puppeteer browsers install chrome
+      - name: Install Puppeteer Chromium runtime
+        run: npx puppeteer browsers install chrome-headless-shell
       - name: Install Python package
         run: pip install -c constraints.txt -e ".[dev]"
       - name: Tool versions

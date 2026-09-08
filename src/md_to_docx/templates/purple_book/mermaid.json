@@ -5,7 +5,13 @@
     "primaryColor": "#EDE4F7",
     "primaryTextColor": "#2D1B4E",
     "primaryBorderColor": "#6B2FA0",
-    "lineColor": "#6B2FA0"
+    "lineColor": "#6B2FA0",
+    "secondaryColor": "#F6F0FC",
+    "tertiaryColor": "#FFFFFF"
   },
-  "flowchart": { "htmlLabels": true }
+  "flowchart": {
+    "htmlLabels": true,
+    "wrappingWidth": 240,
+    "padding": 12
+  }
 }

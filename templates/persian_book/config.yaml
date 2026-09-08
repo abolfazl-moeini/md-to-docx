@@ -1,0 +1,131 @@
+schema_version: 1
+name: persian_book
+direction: rtl
+language_bidi: fa-IR
+language_latin: en-US
+fonts:
+  body: Vazirmatn
+  heading: Vazirmatn
+  latin: Vazirmatn
+  code: Courier New
+font_files:
+  Vazirmatn: fonts/Vazirmatn-Regular.ttf
+  Vazirmatn-Bold: fonts/Vazirmatn-Bold.ttf
+shell: shell.docx
+page:
+  size: A4
+  margin_cm:
+    top: 2.2
+    bottom: 2.2
+    left: 2.2
+    right: 2.2
+  font_size_pt: 12.0
+  line_spacing: 1.35
+  paragraph_align: start
+  space_after_pt: 6.0
+caption:
+  size_pt: 10.0
+custom_styles:
+  chapter overview: overview
+  dba note: note
+  important note: important
+  warning: warning
+  lab note: lab
+  screenshot recommendation: editorial
+colors:
+  primary: 17324D
+  primary_dark: 0F2133
+  on_primary: FFFFFF
+  quote_bg: E8EEF3
+  warning_bg: FBF7F4
+  warning_title: 8B6914
+  body: '222222'
+  caption: '555555'
+headings:
+  extract_number: true
+  badge: false
+  h1:
+    size_pt: 22
+    page_break_before: true
+  h2:
+    size_pt: 18
+  h3:
+    size_pt: 15
+  h4:
+    size_pt: 13
+  h5:
+    size_pt: 12
+  h6:
+    size_pt: 12
+callouts:
+  note:
+    classes:
+    - note
+    default_title: نکته
+    icon: ◆
+    header_bg: primary_dark
+    header_fg: on_primary
+    body_bg: F0F4F8
+  warning:
+    classes:
+    - warning
+    default_title: هشدار
+    icon: ''
+    header_bg: warning_bg
+    header_fg: warning_title
+    body_bg: warning_bg
+  overview:
+    classes:
+    - overview
+    default_title: ''
+    icon: ''
+    header_bg: primary_dark
+    header_fg: on_primary
+    body_bg: E8EEF3
+  important:
+    classes:
+    - important
+    default_title: توجه مهم
+    icon: '!'
+    header_bg: warning_bg
+    header_fg: warning_title
+    body_bg: FDF8F0
+  lab:
+    classes:
+    - lab
+    default_title: یادداشت تمرین
+    icon: ◆
+    header_bg: primary_dark
+    header_fg: on_primary
+    body_bg: E8EEF3
+  editorial:
+    classes:
+    - editorial
+    default_title: پیشنهاد تصویر
+    icon: ◆
+    header_bg: E8EEF3
+    header_fg: caption
+    body_bg: F8F9FA
+quotes:
+  border_side: physical_right
+  border_pt: 12
+  border_color: primary
+  bg: quote_bg
+tables:
+  header_bg: primary
+  header_fg: on_primary
+  bidi_visual: true
+code_block:
+  theme: friendly
+  bg: F4F6F8
+  border_color: CFD8DC
+  border_sz: 4
+  font_size_pt: 9.5
+  line_spacing: 1.15
+mermaid:
+  format: png
+  scale: 3
+  max_width_in: 6.3
+  theme_file: mermaid.json
+  css_file: mermaid.css
+  puppeteer_config: puppeteer.json

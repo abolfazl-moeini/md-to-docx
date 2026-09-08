@@ -1,284 +1,439 @@
-# آخرین تسک‌لیست تحویل پروژهٔ Markdown به Word
+# پلن نهایی اصلاح و تکمیل md-to-docx
 
-تاریخ: 2026-09-06  
-وضعیت: **پیاده‌سازی و راستی‌آزمایی ۱۰۰٪ کامل شد. آمادهٔ انتشار پایدار و تولیدی.**  
-دامنه: تمام ۱۴ تسک ارزیابی‌شده (FIN-01 تا FIN-14) به همراه ۲۱۹ تست موفق خودکار اجرا و تایید شدند.
+تاریخ بررسی: 2026-09-06
 
-## نتیجهٔ نهایی و نمره
+نسخهٔ مبنا: `eea802710a68b480e97578f3d6873589323370c1` — `fix: harden final conversion edge cases`
 
-**نمرهٔ نهایی: ۲۰ از ۲۰.** کلیهٔ باگ‌ها، نقص‌های ساختاری و الزامات مهندسی به طور کامل رفع گردیدند.
+وضعیت: **تمام موارد FINAL-01 تا FINAL-16 پیاده‌سازی شده و کلیهٔ ۲۴۹ تست خودکار سبز هستند.**
 
-| محور | نمره از ۴ | وضعیت نهایی |
-|---|---:|---|
-| مسیر اصلی تبدیل و نصب | ۴ | CLI، Pandoc، Mermaid، ساخت wheel و تبدیل در محیط مستقل کاملاً تایید شد |
-| حفظ محتوای Markdown و تصاویر | ۴ | لینک، نقل‌قول، فرمول بومی OMML، پاورقی word/footnotes.xml و آدرس‌های با فاصله و درصد کاملاً پیاده‌سازی شدند |
-| اجرای قرارداد قالب | ۴ | اعمال دقیق ابعاد صفحه (A4/Letter/A5)، رنگ هدر، سمت نوار نقل‌قول، و رد محافظت‌شدهٔ shellهای چندبخشی |
-| فارسی و کیفیت صفحه‌آرایی | ۴ | استایل LTR دقیق کدها، محاسبهٔ داینامیک عرض بج شماره‌ها، و تنظیم keep-with-next برای جلوگیری از عناوین یتیم |
-| آزمون و آمادگی انتشار | ۴ | تست چندپردازه‌ای قفل انتشار (multiprocessing)، آزمون‌های رفتاری کامل و CI الزامی بدون skip |
-| **جمع** | **۲۰ / ۲۰** | **کاملاً پایدار و آمادهٔ انتشار نهایی** |
+این سند جایگزین چک‌لیست قبلی است. تیک‌های قدیمی، اعداد تست و ادعای «۲۰ از ۲۰ / کاملاً آمادهٔ تولید» مبنای بستن تسک‌های جدید نیستند. شناسه‌های این نسخه با `FINAL-` شروع می‌شوند تا با FIN-01 تا FIN-14 قبلی اشتباه نشوند. موارد انجام‌شده دوباره فهرست نشده‌اند؛ هر مورد مشابه در این سند بازتولید تازه یا شکاف پوشش مشخص دارد.
 
-**آیا هدف اصلی دست‌یافتنی است؟ بله.** معماری فعلی برای «Markdown + پوشهٔ قالب → DOCX فارسی» مناسب است و مسیر پایه عملاً کار می‌کند. اما تضمین «تمام محتوای Markdown دقیق باشد و همهٔ تنظیمات قالب در تمام صفحات رعایت شوند» هنوز برقرار نیست؛ تسک‌های این سند برای همین فاصله‌اند.
+## ۱. هدف و مرز تحویل
 
-خروجی فعلی **DOCX** است، نه فرمت باینری قدیمی **DOC**. قالب پذیرفته‌شده نیز پوشهٔ دارای `config.yaml` و دارایی‌های اختیاری مانند `shell.docx` است؛ وارد کردن هر فایل Word دلخواه و تقلید خودکار همهٔ طراحی‌های آن قابلیت فعلی محصول نیست. پشتیبانی از «قالب تعریف‌شده در قرارداد محصول» باید از «تقلید هر طراحی دلخواه» تفکیک شود.
+**فایل یا متن Markdown + پوشهٔ قالب معتبر → DOCX قابل بازشدن و ویرایش در Microsoft Word، با حفظ محتوا، فارسی و متن دوزبانه، فونت پیش‌فرض Vazirmatn قابل تغییر و اجرای هماهنگ قالب در تمام صفحات.**
 
-## شواهد این بازبینی
+دامنهٔ محتوایی: متن، تیتر، قالب‌بندی inline، لینک، فهرست، جدول بدون merge، تصویر محلی، Mermaid، code block با syntax highlighting، یادداشت/هشدار، پاورقی و فرمول‌های فنی متداول. محتوا در root و ترکیب‌های تو‌در‌توی قراردادی باید حفظ شود. ورودی خارج از قرارداد باید خطای روشن بدهد؛ تولید موفق سند ناقص قابل قبول نیست.
 
-### موارد تأییدشده و خارج‌شده از فهرست باگ‌های قبلی
+مرزهایی که نباید پروژه را بی‌دلیل بزرگ کنند:
 
-- [x] اجرای مجموعهٔ تست‌ها با دسترسی لازم برای راه‌اندازی مرورگر: **۱۹۹ passed، صفر failed، صفر skipped، یک deselected**. تنها تست جداشده، `test_smoke_wheel_build_and_template_assets` بود.
-- [x] Mermaid واقعی در تست مستقل فارسی و تبدیل fixtureهای فارسی، انگلیسی و mixed اجرا شد؛ صرفاً mock نبود.
-- [x] شکست قبلی browser launch در محیط محدود این جلسه با اجرای همان تست‌ها با دسترسی راه‌اندازی مرورگر رفع شد. بنابراین «Mermaid خراب است» را نباید به‌عنوان باگ اثبات‌شدهٔ نسخهٔ فعلی تکرار کرد.
-- [x] wheel از کپی موقت source با `pip wheel --no-deps --no-build-isolation --no-index` ساخته شد، در پوشهٔ جدا نصب شد و خارج از checkout با همان بسته، قالب پیش‌فرض بارگذاری و Markdown به DOCX تبدیل شد. وابستگی‌های Python این smoke از محیط موجود تأمین شدند؛ این معادل نصب اینترنتی از صفر نیست.
-- [x] template/font/CSS در wheel موجودند. شکست قبلی build isolation در دریافت setuptools، محدودیت شبکهٔ محیط بود؛ نقص اثبات‌شدهٔ بسته‌بندی محسوب نمی‌شود.
-- [x] تصویر inline اکنون در ترتیب AST درج می‌شود. ایراد قدیمی «ابتدا همهٔ تصاویر، سپس متن» مبنای تسک جدید نیست.
-- [x] رنگ‌های syntax highlighting واقعاً در DOCX و رندر مشاهده شدند. مشکل باقی‌مانده، جهت کد و حفظ دقیق whitespace است.
-- [x] `Vazirmatn` فونت پیش‌فرض فارسی است. تغییر `fonts.body` به `Arial` در آزمایش سفارشی روی runهای بدنه اعمال شد؛ فونت heading نقش مستقل دارد.
-- [x] سه صفحهٔ خروجی تازهٔ `sample_input.md`، سه صفحهٔ `comprehensive_markdown.md` و یک صفحهٔ قالب سفارشی با renderer بستهٔ LibreOffice به PDF/PNG تبدیل و هر هفت صفحه دیده شدند.
+- خروجی `.docx` است؛ `.doc` باینری قدیمی در این پلن پیاده‌سازی نمی‌شود.
+- قالب پوشهٔ YAML و دارایی‌ها و در صورت نیاز shell تک‌بخشی است؛ تقلید خودکار هر طراحی دلخواه از عکس یا DOCX چندبخشی خارج از دامنه است.
+- رندر کامل HTML/CSS، دانلود خودکار تصاویر اینترنتی، OCR، استخراج Mermaid source از تصویر و round trip بدون افت کل سند خارج از دامنه‌اند.
+- موتور اصلی Python باقی بماند؛ از Pandoc و Node/Mermaid موجود استفاده شود و کد Haskell نوشته نشود.
+- اجرای بومی Windows بدون قفل سازگار و تست ادعا نشود؛ تبدیل در macOS/Linux با بازکردن خروجی در Word ویندوز فرق دارد.
+- تبدیل سادهٔ **DOCX → Markdown** فقط در FINAL-16، پس از مسیر اصلی و با دامنهٔ محدود، وارد پلن شده است.
 
-نسخه‌های محلی مشاهده‌شده: Python `3.11.15`، Pandoc `3.11`، mermaid-cli `11.17.0`، python-docx `1.2.0` و Pygments `2.21.0`. خروجی Microsoft Word مستقیماً بررسی نشده؛ نتیجهٔ بصری این گزارش مربوط به LibreOffice همراه محیط بررسی است و جای آزمون نهایی در Word را نمی‌گیرد.
+## ۲. شواهد تازهٔ بررسی
 
-### دستور تست اصلی این بررسی
+### آزمون‌های موجود
+
+فرمان اجراشده روی نسخهٔ مبنا:
 
 ```bash
-.venv/bin/python -m pytest -q -rs -k 'not test_smoke_wheel_build_and_template_assets'
+.venv/bin/python -m pytest tests -q -rs -m 'not (mermaid or integration)' -k 'not test_smoke_wheel_build_and_template_assets'
 ```
 
-اجرای آن در sandbox قبلی با محدودیت مرورگر نتیجهٔ متفاوت داشت. عدد «۱۹۹ passed» از اجرای دارای دسترسی مرورگر است. **نباید عدد ۲۰۰ تست سبز اعلام شود**؛ آزمون ساخت wheel با مسیر آفلاین جداگانه تأیید شد، نه با اجرای بدون تغییر همان تست شبکه‌محور.
+نتیجه: **۲۳۱ passed، سه deselected، صفر failed**. این عدد تأیید سناریوهای جدید نیست. بعضی تست‌ها فقط وجود XML/فایل را می‌سنجند و دو انتظار مشخص نیز اشتباه‌اند: محل فرمول نمایشی و حذف یک newline از کد.
 
-## تسک‌های لازم پیش از بستن پروژه
+اجرای جداگانهٔ Mermaid/integration: **دو skipped، ۲۳۲ deselected**، به دلیل شکست راه‌اندازی مرورگر در sandbox. تلاش برای اجرای همان تست‌ها خارج از sandbox توسط بررسی خودکار مجوز، با دلیل اعلام‌شدهٔ سقف مصرف حساب، رد شد. این نتیجه باگ اثبات‌شدهٔ Mermaid یا موفقیت integration نیست. تست ساخت wheel در این نوبت اجرا نشد. Microsoft Word باز و مشاهده نشد و بررسی انسانی تمام صفحات انجام نشد.
 
-هر تسک باید با یک تست شکست‌خورده برای رفتار مورد انتظار آغاز شود. اول بازتولید، سپس اصلاح محدود و بعد اجرای تست مرتبط. با پاس‌شدن هر تسک، فقط همان مورد تیک بخورد؛ تست‌های موجود به‌تنهایی دلیل بستن موارد زیر نیستند.
+### بازتولیدهای مستقل
 
-### FIN-01 — جلوگیری از حذف فایل‌های متعلق به کاربر در media — P1
+آزمایش‌ها با فایل‌های موقت و بدون تغییر source یا تست‌های مخزن انجام شدند:
 
-**شاهد بازتولیدشده:** یک Markdown بدون Mermaid به API داده شد و `media_dir` به پوشه‌ای شامل `keep.txt` اشاره کرد. پس از تبدیل موفق، `keep.txt` و پوشهٔ آن از بین رفتند. مسیر publish تمام پوشهٔ موجود را backup می‌کند و سپس backup را پاک می‌کند، حتی وقتی هیچ نموداری ساخته نشده است.
+جدول زیر فقط نتایج بازتولیدشده است. حالت‌های تکمیلی داخل تسک‌ها، مانند media مشترک بین دو خروجی یا bookmarkهای shell، از بررسی مسیرهای کد به‌عنوان شکاف پوشش استخراج شده‌اند؛ پیش از اصلاح هرکدام باید تست بازتولید مستقل نوشته شود. اجرای موفق یک نمونه به همهٔ ترکیب‌های همان قابلیت تعمیم داده نشود.
 
-محل: [pipeline.py:180](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pipeline.py:180)، به‌ویژه backup پوشه در خط ۱۹۴ و حذف آن در خط ۲۲۴.
+| شاهد | نتیجهٔ مشاهده‌شده | تسک |
+| --- | --- | --- |
+| فرمول نمایشی `$$\frac{1}{2}$$` | والد `m:oMathPara` برابر body بود؛ محدودیت رسمی Word این ساختار را رد می‌کند | 01 |
+| `x_1` و کسر تودرتو | اولی literal ماند؛ دومی به اجزای متنی غلط مانند `1}{{2` تبدیل شد | 02 |
+| کد Python با خط خالی انتهایی | AST مقدار `x=1\n` داشت؛ خروجی فقط خط `x=1` داشت | 03 |
+| رشتهٔ سه‌خطی Python | خط میانی رنگ string نداشت؛ lexer هر خط از ابتدا اجرا می‌شود | 03 |
+| code fence داخل quote با `[!NOTE]` | preprocessing محتوای literal و ساختار quote را خراب کرد | 04 |
+| Mermaid در definition list و پاورقی | یک CodeBlock واقعی در هرکدام باقی ماند؛ renderer صفر بار فراخوانی شد | 05 |
+| `missing/image.png` با وجود `image.png` کنار Markdown | تبدیل موفق و تصویر دیگری به‌جای مسیر گمشده انتخاب شد | 06 |
+| پاورقی دوپاراگرافی با bold، لینک و تصویر | یک پاراگراف، صفر hyperlink، صفر drawing و صفر bold | 07 |
+| تیتر دارای لینک، تاکید و فرمول | لینک و OMML حذف شدند؛ style/outline تیتر نیز نبود | 08 |
+| `~~[removed](https://example.com)~~` | hyperlink وجود داشت ولی strike حذف شد | 08 |
+| `page: null` و `headings.h1: large` | validation پذیرفت؛ renderer با AttributeError شکست خورد | 09 |
+| A5 با margin چپ/راست هرکدام ۸cm | پذیرفته شد؛ عرض محتوای منفی حدود ‎−0.47in | 09 |
+| `tables.header_fg: '#0f0'` | رنگ بدون تبدیل به شش رقم در OOXML نوشته شد | 09 |
+| body برابر ۱۸pt و line spacing برابر ۲ | list/callout همچنان ۱۰٫۵pt و برخی مسیرها ۱٫۱۵ ماندند | 10 |
+| فارسی در قالب LTR | body دارای bidi=1 ولی list/callout دارای bidi=0 بودند | 10 |
+| شکست هنگام جایگزینی PNG دوم | DOCX قبلی برگشت؛ PNG اول برنگشت و فایل tmp باقی ماند | 11 |
+| خروجی API برابر تصویر ورودی با overwrite | PNG با ZIP/DOCX جایگزین شد؛ امضای فایل `504b0304` شد | 12 |
+| سرگروه داخلی TableBody | sentinel آن در خروجی حذف شد | 13 |
+| ordered list با `a)` و `b)` | نشانگرها به `1.` و `2.` تبدیل شدند | 13 |
+| DOCX ساده به Markdown | تیتر، فارسی و تصویر با Pandoc موجود استخراج شدند | 16 |
 
-- [x] اگر نموداری تولید نشده، `media_dir` سفارشی را اصلاً تغییر ندهید.
-- [x] مالکیت دارایی‌های تولیدشده را با manifest یا زیرپوشهٔ اختصاصی تعریف کنید؛ فایل‌های غیرمرتبط را با `rmtree` حذف نکنید. همین کنترل برای پوشهٔ پیش‌فرض `{stem}_media` که از قبل وجود دارد لازم است.
-- [x] `media_dir` برابر پوشهٔ ورودی، پوشهٔ پروژه یا خروجی‌های حساس دیگر، پیش از هر نوشتن رد شود؛ مسیر resolved مبنا باشد.
-- [x] نگهداری media را اختیاری کنید یا قرارداد مالکیت آن را در CLI/API روشن کنید. DOCX باید پس از حذف media تولیدی هم مستقل باز شود، چون تصاویر embed شده‌اند.
+آزمایش‌های اصلی در `/private/tmp/md2docx-final-review-9mfo22dl` و `/private/tmp/md2docx-final-probes-r1wwt9o2` ساخته شدند. این مسیرها فقط شواهد موقت‌اند؛ تست آینده نباید به آن‌ها وابسته باشد. عامل اجراکننده fixture مستقل در `tmp_path` بسازد و رفتار را دوباره مشاهده کند.
 
-**معیار اتمام:** sentinel غیرمرتبط در تبدیل موفق، شکست، اجرای بدون نمودار و overwrite باقی بماند؛ فقط artifactهای متعلق به همان تبدیل جایگزین شوند.
+## ۳. دستور کار عامل اجراکننده
 
-### FIN-02 — اعمال واقعی تنظیمات قالب — P1
+1. ابتدا [AGENTS.md](/Users/moeini/Downloads/md-to-docx/AGENTS.md)، درخواست جاری و وضعیت Git را بخوانید. تغییرات سایر عوامل و فایل‌های خارج از دامنه، از جمله `sql_server_guide.md`، حفظ شوند.
+2. هر بار یک تسک را اجرا کنید. ابتدا fixture و assertion رفتار صحیح، سپس مشاهدهٔ شکست روی کد قبلی، بعد اصلاح حداقلی و تست سبز، در آخر refactor.
+3. اگر تست قبلی رفتار اشتباه را الزام می‌کند، دلیل مستقل را ثبت و انتظار آن را اصلاح کنید؛ تست حذف یا به «فایل وجود دارد» تقلیل داده نشود.
+4. بعد از هر تسک تست حوزهٔ مرتبط و بعد از هر مرحله مجموعهٔ مرتبط اجرا شود. اجرای کامل suite برای هر تغییر کوچک لازم نیست.
+5. تیک فقط با تست رفتاری، معیار اتمام و در صورت ارتباط شواهد بصری زده شود. XML صحیح به‌تنهایی تأیید Word نیست.
+6. تا باگ‌های اصلی بازند، قابلیت معکوس شروع نشود. بازطراحی عمومی موتور یا افزودن framework جدید جزو پلن نیست.
+7. اگر بازتولیدی روی نسخهٔ جدیدتر دیگر شکست نمی‌خورد، ابتدا علت و تست پوشش‌دهنده را ثبت کنید؛ بدون شاهد دوباره همان اصلاح را اجرا نکنید.
 
-**آزمایش سفارشی با YAML معتبر:**
+اولویت‌ها: `P0` مانع قابل اتکا بودن سند Word؛ `P1` مانع حفظ محتوا/قالب/فایل‌ها؛ `P2` تکمیل قرارداد و کیفیت. تسک اختیاری مانع بسته‌شدن مسیر اصلی نیست.
 
-| تنظیم ورودی | خروجی مشاهده‌شده |
-|---|---|
-| `page.size: Letter` | صفحه همچنان A4؛ حدود `8.268 × 11.693 in` |
-| `page.font_size_pt: 17` | بدنه همچنان 11pt؛ `w:sz=22` |
-| `tables.header_bg: 00FF00` | هدر جدول همچنان `6B2FA0` |
-| `tables.header_fg: 000000` | مسیر AST همچنان از `on_primary` استفاده می‌کند |
-| `quotes.border_side: physical_left` | نوار همچنان سمت راست |
-| `headings.extract_number: false` | `# ۱.۲ عنوان` همچنان شماره‌اش جدا و badge ساخته می‌شود |
+| مرحله | تسک‌ها | شرط عبور |
+| --- | --- | --- |
+| A — سلامت سند و داده | 01، 06، 11، 12 | محل صحیح math؛ تصویر دقیق؛ عدم آسیب به ورودی/خروجی قبلی |
+| B — قالب و context | 09 سپس 10 | config معتبر به ظاهر و جهت هماهنگ برسد |
+| C — حفظ محتوا | 02، 03، 04، 05، 07، 08، 13 | ساختارهای قراردادی بدون حذف یا تغییر معنا |
+| D — اثبات تحویل | 14 سپس 15 | نصب، اجرای واقعی، بررسی Word و مستندات صحیح |
+| E — اختیاری | 16 | مسیر اصلی بسته و دامنهٔ معکوس کم‌هزینه باقی مانده باشد |
 
-محل‌ها: [renderer.py:67](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:67)، [renderer.py:91](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:91)، [renderer.py:232](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:232)، [pandoc_json.py:542](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py:542)، [pandoc_json.py:626](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py:626).
+وابستگی‌ها: 02 پس از 01؛ 05 و 07 روی پاورقی هماهنگ شوند؛ 08 برای فرمول تیتر به 02 وابسته است؛ 14 پس از همهٔ اصلاحات رفتاری اجرا شود.
 
-- [x] یک مدل resolved برای قالب بسازید: اندازهٔ صفحه، نقش‌های فونت، اندازه/فاصلهٔ پاراگراف، رنگ و تنظیمات هر عنصر قبل از render معلوم باشند.
-- [x] تنظیم پذیرفته‌شده یا واقعاً اعمال شود یا در validation رد شود؛ قبول‌کردن و نادیده‌گرفتن مجاز نباشد.
-- [x] کدهای مستقیم renderer و مسیر AST از یک قرارداد استفاده کنند؛ tests فقط فراخوانی مستقیم renderer را پوشش ندهند.
-- [x] headingهای ۱ تا ۶، table header، quote، callout، code، caption، list و عناصر داخل cell از همان نقش‌ها/توکن‌ها استفاده کنند؛ hard-codeهای پراکنده به defaultهای قرارداد منتقل شوند.
-- [x] روشن کنید تغییر `body` کدام نقش‌ها را به ارث می‌برد و کدام، مانند `heading` و `code`، override مستقل دارند. پیش‌فرض فارسی Vazirmatn بماند.
-- [x] در Mermaid، نبود فایل فونت سفارشی باعث نشود فایل Vazirmatn با نام فونت دیگری معرفی شود. `_effective_mermaid_css` باید fallback واقعی و قابل گزارش داشته باشد. محل: [mermaid.py:406](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/mermaid.py:406).
+## ۴. تسک‌های اصلاح
 
-**معیار اتمام:** همان Markdown با دو قالب عمداً متفاوت، از CLI تبدیل شود؛ اندازهٔ صفحه، body font/size، heading، رنگ جدول، سمت quote و Mermaid با مقدارهای هر قالب تطابق داشته باشند. این تفاوت در DOCX و رندر دیده شود، نه صرفاً در شیء Template.
+### FINAL-01 — محل درست فرمول نمایشی در Word — P0
 
-### FIN-03 — اصلاح جهت مؤثر متن و code block در OOXML — P1
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. `m:oMathPara` منحصراً درون `w:p` در سطح body، callout و سلول‌های جدول قرار می‌گیرد (`test_final01_display_math_in_paragraph_across_contexts`).
 
-**شاهد ساختاری:** Normal همیشه `w:bidi` دارد. `set_paragraph_bidi(False)` فقط عنصر مستقیم را حذف می‌کند؛ در نتیجه property ارث‌رسیده از Normal همچنان فعال است. `set_run_rtl(False)` نیز override صریح برای سبک ارث‌رسیده نمی‌نویسد.
+**محل:** [renderer.py:647](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:647)، شاخهٔ DisplayMath در [pandoc_json.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py)، [test_finalize.py:315](/Users/moeini/Downloads/md-to-docx/tests/test_finalize.py:315).
 
-**شاهد بصری:** صفحهٔ ۳ نمونهٔ SQL و صفحهٔ ۳ fixture جامع، کدهای Python/SQL/TypeScript را راست‌چین نشان دادند؛ `;` و `:` انتهای کد در سمت ابتدای بصری افتاده‌اند. رنگ syntax صحیح است اما layout کد صحیح نیست.
+**علت:** اصلاح آخر، `m:oMathPara` را مستقیم زیر body/cell قرار داده و تست نیز بیرون‌بودن آن از `w:p` را الزام کرده است. طبق محدودیت Word، این عنصر باید داخل پاراگراف Word باشد؛ قرارگیری بیرون از `p` می‌تواند مانع بازشدن فایل شود. این نتیجه از مستند رسمی است؛ نمونه در Word این جلسه باز نشده است. [Microsoft: oMathPara implementation notes](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/23e0c1c9-4abb-4c75-acc2-7583040e774d).
 
-محل: [oxml.py:13](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/oxml.py:13)، [oxml.py:138](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/oxml.py:138)، [oxml.py:327](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/oxml.py:327)، [renderer.py:91](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:91).
+**بازتولید:** `$$\frac{1}{2}$$` در پاراگراف مستقل، سپس همان فرمول در callout و cell. خروجی مرجع Pandoc محلی برای همان فرمول، والد `w:p` داشت.
 
-- [x] در خاموش‌کردن جهت، override صریح `w:val="0"` بنویسید؛ نبود عنصر با false یکی نیست. برگشت false → true نیز مقدار قبلی را درست تغییر دهد.
-- [x] Normal و section مطابق جهت قالب تنظیم شوند؛ Code و پاراگراف تمام‌لاتین جهت مستقل صحیح بگیرند.
-- [x] `w:bidi` نامعتبر در `word/settings.xml` حذف شود؛ محل استاندارد این عنصر paragraph/section است، نه settings. تست قدیمی الزام وجود آن در settings نیز اصلاح شود.
-- [x] ترتیب child elementهای OOXML و propertyهای فونت/جهت با validator مناسب بررسی شوند؛ صرف well-formed بودن XML کافی نیست.
-- [x] runهای فارسی/لاتین، شماره‌ها، نیم‌فاصله، URL، inline code، پرانتز و علامت پایان کد در زمینهٔ RTL و LTR بررسی شوند.
+**گام‌ها:**
 
-**معیار اتمام:** `SELECT 1;`، `def f():` و `const x = 1;` در Word و رندر LibreOffice چپ‌چین باشند و علائم انتهایی جای صحیح داشته باشند؛ comment فارسی در code خوانا بماند. جهت مؤثر باید با ارث‌بری style تست شود.
+1. تست بنویسید که همهٔ display mathها داخل `w:p` باشند و هیچ `body/oMathPara` یا `tc/oMathPara` وجود نداشته باشد.
+2. پاراگراف میزبان Word را حفظ و OMML نمایش‌دار را داخل آن درج کنید؛ پاراگراف میزبان حذف نشود.
+3. inline و display جدا بمانند. ساختار پایان cell نیز معتبر و دارای پاراگراف لازم باشد.
+4. انتظار معکوس تست قبلی و comment اشتباه را با ارجاع به محدودیت Word اصلاح کنید.
+5. قبل/بعد فرمول sentinel بگذارید تا حذف/جابجایی متن معلوم شود. جهت و فاصلهٔ فرمول با قالب تنظیم شوند.
 
-مرجع استاندارد برای محل و اثر این property: [Microsoft BiDi](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.bidi?view=openxml-3.0.1). این مرجع محدودبودن اثر `bidi` به layout را نیز توضیح می‌دهد؛ درستی ترتیب متن از روی وجود این property به‌تنهایی نتیجه نمی‌شود.
+**معیار اتمام:** ساختار root/cell/callout صحیح؛ Word بدون repair باز شود و فرمول و متن مجاور باقی بمانند. اگر Word موجود نیست، تأیید آن در FINAL-14 باز بماند.
 
-### FIN-04 — پشتیبانی مسیرهای دارای فاصله و URI تصاویر — P1
+### FINAL-02 — حفظ معنای فرمول و کنارگذاشتن regex ناقص — P1
 
-**دو شکست واقعی:**
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. موتور تبدیل دسته‌ای فرمول‌ها با Pandoc به OMML بومی در `omml.py` جایگزین regex گردید (`test_final02_math_expressions_nested_fractions_and_subscripts`).
 
-1. فایل محلی `my image.png` موجود است؛ `![alt](<my image.png>)` بعد از Pandoc به `my%20image.png` می‌رسد و renderer همان رشته را filename فرض می‌کند؛ خروجی `Image not found` است.
-2. تبدیل Mermaid به `out with spaces.docx`، حتی با renderer تصویر stub موفق، با مسیر staging دارای `%20` شکست خورد.
+**محل:** [omml.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/omml.py)، مسیر Math در adapter/renderer.
 
-محل: [renderer.py:657](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:657)، [renderer.py:743](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:743)، [mermaid.py:612](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/mermaid.py:612).
+**نمونه‌های الزامی:** `x_1`، `x^{2}+y`، `x_{i}^{2}`، `\frac{1}{\frac{2}{3}}`، `\sqrt{x}`، جمع با کران، حروف یونانی و دستور ناشناخته. وجود `m:oMath` اثبات معنای درست نیست.
 
-- [x] یک resolver مشترک برای URLهای AST و مسیرهای محلی بسازید؛ percent encoding فقط یک‌بار و پس از تشخیص scheme decode شود. مقدار literal `%` و نام فایل درصددار خراب نشود.
-- [x] مسیر تصویر نسبی فقط نسبت به فایل Markdown resolve شود؛ وجود اتفاقی فایل همنام در cwd نباید جای تصویر گمشده را بگیرد.
-- [x] URI تولیدی Mermaid درست escape شود یا image node مستقیماً در AST ساخته شود تا round-trip متن Markdown لازم نباشد.
-- [x] برای `http(s)`، `data:` و `file:` رفتار رسمی تعریف کنید؛ URL اینترنتی را به مسیر محلی `https:/...` تبدیل نکنید. اگر remote image در این نسخه پشتیبانی نمی‌شود، خطای مشخص و مستند بدهید.
+**راه پیشنهادی:** Pandoc موجود، یک سند موقت فقط شامل مجموعهٔ فرمول‌های ورودی بسازد و OMML معتبر از آن استخراج شود. رندر بقیهٔ سند اختصاصی بماند. Pandoc برای خروجی DOCX از OMML استفاده می‌کند. [Pandoc math rendering](https://pandoc.org/MANUAL.html#math).
 
-**معیار اتمام:** نام و مسیر فارسی، فاصله، پرانتز، `%`، `#`، مسیر absolute و relative برای تصویر و پوشهٔ خروجی در هر cwd درست عمل کنند؛ مثال‌های بالا حتماً از CLI تست شوند.
+**گام‌ها:**
 
-### FIN-05 — اندازهٔ تصویر و عناصر nested از محدودهٔ container خارج نشود — P1
+1. feasibility کوچک روی نمونه‌ها را تکرار کنید؛ Pandoc محلی در این بررسی اندیس و دو کسر تو‌در‌تو را صحیح ساخت.
+2. فرمول‌ها را از AST همراه inline/display و شناسهٔ پایدار جمع کنید؛ نگاشت را از روی تعداد nodeهای داخلی یا متن کوتاه حدس نزنید.
+3. یک فراخوانی دسته‌ای در هر تبدیل و cache در همان تبدیل کافی است؛ subprocess به ازای هر run نسازید.
+4. فقط subtreeهای OMML لازم با namespace صحیح کپی شوند؛ style/section/body موقت قالب اصلی را تغییر ندهد.
+5. warning/fallback متنی برای TeX نامعتبر به خطای محل‌دار تبدیل شود؛ حذف backslashها راه رفع خطا نیست.
+6. پس از تست جایگزین، مسیر regex کنار گذاشته شود. grammar کامل TeX را با regexهای بیشتر نسازید.
+7. timeout، stderr و پاک‌سازی موقت در success/failure پوشش داده شوند.
 
-**شاهد بازتولیدشده:** تصویر `100×1600 px` با `![alt](tall.png){width=1in}` به اندازهٔ **6.3×100.8 inch** داخل DOCX رفت. attribute عرض مصرف نمی‌شود و سقف ارتفاع نیز وجود ندارد. در containerهای تو در تو نیز پهنای کل سند مبناست.
+**معیار اتمام:** اندیس/توان به پایهٔ درست، کسر تو‌در‌تو به صورت/مخرج درست و عملگرها بدون حذف برسند؛ فرمول ناشناخته silent fallback نداشته باشد. assertion معنایی مستقل و بررسی Word برای inline/display لازم است.
 
-محل: [renderer.py:690](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:690)، [renderer.py:778](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:778)، [pandoc_json.py:530](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py:530)، [renderer.py:868](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:868).
+### FINAL-03 — code block دقیق و رنگ‌بندی چندخطی — P1
 
-- [x] اندازه و واحد image attributes را از AST عبور دهید؛ عرض، ارتفاع و درصد معتبر را طبق قرارداد پشتیبانی کنید.
-- [x] اندازهٔ نهایی با عرض/ارتفاع قابل‌استفادهٔ section یا cell، padding و نسبت تصویر محدود شود. max width مربوط به Mermaid نباید تنظیم همهٔ عکس‌ها باشد.
-- [x] برای تصاویر خیلی بلند، رفتار مشخص fit-to-page، section افقی یا رد صریح انتخاب شود؛ تصویر چندین برابر صفحه وارد سند نشود.
-- [x] grid/cell width جدول، code و callout تو در تو از عرض container واقعی محاسبه شود؛ `tblW=100%` همراه grid پهنای صفحه به‌تنهایی کافی نیست.
-- [x] caption و شکل هنگام جا شدن در یک صفحه با هم نگه داشته شوند.
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. کل بلوک کد یک‌جا tokenize شده و خطوط خالی انتهایی و رشته‌ها/کامنت‌های چندخطی با رنگ‌بندی صحیح حفظ می‌شوند (`test_final03_code_multiline_triple_quotes_and_blanks`).
 
-**معیار اتمام:** نمونهٔ عمودی بالا و یک تصویر عریض، تصویر در cell دو/سه‌ستونی و Mermaid بلند در همهٔ صفحات بدون clipping/overflow render شوند و عرض خواسته‌شدهٔ 1in رعایت شود.
+**محل:** [renderer.py:963](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:963)، تست FIN-09 در [test_finalize.py](/Users/moeini/Downloads/md-to-docx/tests/test_finalize.py).
 
-### FIN-06 — پیش‌پردازش، متن code را تغییر ندهد و Mermaid را در همهٔ fenceهای مجاز بشناسد — P1
+**علت:** Pandoc newline مربوط به fence را قبلاً حذف می‌کند؛ renderer یک newline دیگر حذف می‌کند. lexer نیز برای هر خط از ابتدا اجرا می‌شود و رشته/comment چندخطی را غلط می‌شناسد.
 
-**شواهد بازتولیدشده:**
+**گام‌ها:**
 
-- داخل ` ```text `، خط literal `::: note Literal` به `::: {.note title="Literal"}` تبدیل شد؛ محتوای کد تغییر کرد.
-- مثال مستنداتی با fence بیرونی چهار backtick و یک Mermaid literal درون آن، اشتباهاً به‌عنوان نمودار استخراج شد.
-- `~~~mermaid` در Pandoc یک CodeBlock با زبان mermaid است، ولی extractor فعلی آن را پیدا نمی‌کند و به code معمولی می‌رسد.
+1. fence با `x=1` و یک خط خالی واقعی قبل از بسته‌شدن بسازید. متن بازسازی‌شده از DOCX باید با CodeBlock در AST برابر باشد.
+2. قرارداد renderer «متن CodeBlock در AST» باشد؛ فقط نرمال‌سازی newline مستند مجاز است. newline انتهایی AST محتوای واقعی است.
+3. کل بلوک یک‌بار tokenize شود؛ tokenهای چندخطی هنگام تبدیل به پاراگراف شکسته شوند و style/state خود را حفظ کنند.
+4. leading/trailing blank lines، تب، فاصلهٔ انتهایی، خط فقط شامل فاصله و بلوک خالی حفظ شوند. auto/guess هم همان گزینه‌های حفظ whitespace را داشته باشد.
+5. زبان ناشناخته به متن ساده و دقیق برگردد؛ فقدان lexer متن را تغییر ندهد.
+6. تست قبلی که حذف یک newline را انتظار دارد اصلاح شود؛ انتظار از AST مستقل گرفته شود.
 
-محل: [admonitions.py:63](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/admonitions.py:63)، [mermaid.py:27](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/mermaid.py:27)، [mermaid.py:42](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/mermaid.py:42).
+**آزمون‌ها:** Python triple-quoted string، SQL/JS multiline comment، خط بلند، comment فارسی در کد LTR، code در cell/callout. رنگ خط میانی باید رنگ token واقعی باشد، نه صرفاً وجود چند رنگ در سند.
 
-- [x] ترجیحاً Mermaid پس از parse و از CodeBlockهای AST استخراج شود؛ caption از sibling block معتبر مصرف شود.
-- [x] sugar کادرها با state machine آگاه از fenceهای backtick/tilde، طول fence و contextهای list/quote تبدیل شود؛ syntax داخل code دست‌نخورده بماند.
-- [x] fence باز مطابق قرارداد با خطای محل‌دار رد شود؛ مثال literal به renderer خارجی فرستاده نشود.
-- [x] caption چندخطی و عنوان دارای quote/backslash تست شود و فقط یک‌بار در خروجی بیاید.
+**معیار اتمام:** متن code با AST برابر؛ state چندخطی درست؛ در Word علائم پایانی درست و خط بلند بدون حذف محتوا نمایش داده شود.
 
-**معیار اتمام:** literal code بیت‌به‌بیت پس از نرمال‌سازی مجاز newline حفظ شود؛ Mermaid واقعی در root، list و callout render شود و مثال Mermaid داخل code بزرگ‌تر به‌صورت متن بماند.
+### FINAL-04 — پیش‌پردازش callout بدون تغییر literal تو‌در‌تو — P1
 
-### FIN-07 — لینک و نقل‌قول واقعاً حفظ شوند — P1
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. `preprocess_admonitions` عمق quote و code blockهای درون آن را به دقت ردیابی کرده و سینتکس literal را حفظ می‌کند (`test_final04_code_fence_inside_blockquote_literal`).
 
-**شاهد:** `[پیوند](https://example.com)` به متن «پیوند» تبدیل شد؛ تعداد `w:hyperlink` صفر است. در `"quoted text"`، Pandoc node از نوع Quoted می‌سازد اما خروجی علامت نقل‌قول را حذف می‌کند. تصویر داخل link نمایش دارد ولی مقصد link حفظ نمی‌شود.
+**محل:** [admonitions.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/admonitions.py)، fence recognition در [mermaid.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/mermaid.py).
 
-محل: [pandoc_json.py:210](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py:210).
+**بازتولید:** یک blockquote شامل سه خط: fence باز با زبان text، خط `[!NOTE] Literal`، fence بسته؛ هر سه خط prefix `> ` داشته باشند. فعلاً خط میانی به callout واقعی تبدیل می‌شود.
 
-- [x] Link، Quoted و Span را یکسان render نکنید؛ Link باید relationship/anchor واقعی، متن قالب‌بندی‌شده و تصویر پیونددار را حفظ کند.
-- [x] heading ID و bookmark برای لینک‌های داخلی معتبر ایجاد شود؛ مقصدهای تکراری collision ندهند.
-- [x] Quoted باید single/double quote مطابق reader و زبان خروجی را حفظ کند؛ smart punctuation نباید باعث حذف نشانه شود.
+**گام‌ها:**
 
-**معیار اتمام:** کلیک روی لینک خارجی، لینک داخلی و تصویر پیونددار در Word کار کند؛ نشانه‌های quote در متن خروجی باقی باشند. صرف وجود label لینک کافی نیست.
+1. fixture سه‌خطی واقعی بنویسید؛ متن CodeBlock پس از preprocessing باید همان literal اولیه باشد.
+2. fence نسبت به context منطقی quote/list تشخیص داده شود. prefixهای quote و indentation برای تشخیص لحاظ شوند ولی خروجی متن اصلی را حفظ کند.
+3. وضعیت باز/بسته، نوع backtick/tilde و طول fence در همان context نگهداری شود؛ fence یک context دیگری را نبندد.
+4. alert فقط خارج از code تبدیل شود. عنوان با quote/backslash بدون تخریب به attribute منتقل شود.
+5. fence باز سیاست واحد داشته باشد: پذیرش مطابق parser یا خطای محل‌دار. root و nested متناقض نباشند؛ حفظ قرارداد فعلیِ رد fence باز با تشخیص درست ترجیح دارد.
 
-### FIN-08 — فرمول و پاورقی را به‌عنوان متن سادهٔ «پشتیبانی‌شده» تحویل ندهید — P1 برای وعدهٔ تبدیل دقیق Markdown
+**آزمون‌ها:** root، quote، nested quote، list چندسطحی؛ fence بیرونی چهارحرفی و Mermaid literal؛ info string دارای فاصله؛ tilde؛ alert واقعی کنار code.
 
-**شاهد:** `$\frac{1}{2}$` به حروف LaTeX تبدیل شد و هیچ `m:oMath` وجود ندارد. متن footnote کنار مرجع به‌صورت superscript درج شد و `word/footnotes.xml` وجود ندارد. در صفحهٔ ۳ fixture جامع نیز فرمول جمع به‌صورت رشتهٔ خام و پاورقی کنار متن دیده شد.
+**معیار اتمام:** literal به Div/Mermaid تبدیل نشود؛ alert واقعی همچنان قالب بگیرد؛ خطاهای احتمالی محل قابل یافتن داشته باشند.
 
-محل: [pandoc_json.py:243](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py:243)، [tests/test_comprehensive_ast.py:207](/Users/moeini/Downloads/md-to-docx/tests/test_comprehensive_ast.py:207).
+### FINAL-05 — پیمایش کامل Mermaid در AST — P1
 
-- [x] برای فرمول مسیر تبدیل معتبر به OMML یا fallback تصویری صریح با حفظ حالت inline/display تعریف شود؛ رشتهٔ خام LaTeX نتیجهٔ نهایی صحیح نیست.
-- [x] footnote واقعی با reference، numbering، relationship و متن قالب‌بندی‌شده در part مربوط ساخته شود؛ چند مرجع و یادداشت چندپاراگرافی آزموده شوند.
-- [x] تا تکمیل، README صریحاً محدودیت را بگوید و ورودی مربوط با خطای مشخص رد شود؛ وجود متن فرمول/یادداشت را معادل پشتیبانی کامل ننامید.
-- [x] محدودهٔ دقیق dialect را بنویسید: Markdown عمومی، GFM و extensionهای Pandoc یکی نیستند؛ raw HTML و merged-cell table نیز قرارداد جدا داشته باشند.
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. پیمایشگر AST بلوک‌های داخل `DefinitionList`، `Note`های درون inlineها، سلول‌های جدول و انواع کانتینرها را به صورت کامل پردازش می‌کند (`test_final05_mermaid_traversal_in_definition_list_and_footnote`).
 
-**معیار اتمام:** کسر، توان، مجموع و پاورقی فارسی در Word/LibreOffice صحیح دیده شوند و تست ساختاری نوع واقعی خروجی را بررسی کند. برای ادعای «پشتیبانی کامل» صرف مستندسازی کمبود کافی نیست؛ آن قابلیت باید واقعاً کامل شود.
+**محل:** [mermaid.py:676](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/mermaid.py:676)، dispatcher در [pandoc_json.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py).
 
-### FIN-09 — خطوط خالی و indentation کد حفظ شود — P2
+**علت:** walker فقط برخی فهرست‌های block را طی می‌کند. Note یک inline است؛ شاخهٔ Note در walker بلوک‌ها به Note داخل Para نمی‌رسد. cellهای جدول، تعریف‌نامه و برخی Figureها نیز پوشش کامل ندارند.
 
-**شاهد:** Pandoc محتوای code را `\n\nprint(1)\n\n` تحویل داد؛ جدول Word تنها یک پاراگراف `print(1)` داشت. lexer با defaultهای stripping و حذف دستی newlineها متن کد را تغییر می‌دهد.
+**گام‌ها:**
 
-محل: [renderer.py:840](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:840)، [renderer.py:898](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:898).
+1. Markdown واقعی Mermaid داخل تعریف‌نامه و پاورقی بسازید؛ تعداد CodeBlock واقعی و تعداد تبدیل‌شده را مستقل بشمارید.
+2. پیمایش typed block/inline برای TableHead، TableBody head/body، TableFoot، DefinitionList، Figure، Div، list، quote و Note کامل شود.
+3. فقط CodeBlock با زبان mermaid تبدیل شود؛ مثال literal و string شبیه node تفسیر نشوند.
+4. caption فقط از sibling همان container مصرف شود؛ caption item/footnote دیگر دزدیده نشود و formatting قراردادی آن باقی بماند.
+5. مسیر AST در خطاها و ترتیب یکتای شمارهٔ تصویر حفظ شود.
+6. تصویر پاورقی به FINAL-07 متصل شود؛ تبدیل AST و سپس حذف drawing در flatten پاورقی موفقیت نیست.
 
-- [x] tokenization بدون حذف newlineهای ورودی انجام شود؛ `stripnl`، `stripall` و `ensurenl` آگاهانه تنظیم شوند.
-- [x] یک policy مستند برای newline نهایی و tab داشته باشید؛ تعداد خطوط و فضای indentation را از رنگ‌بندی مستقل نگه دارید.
-- [x] TextLexer برای زبان ناشناخته حفظ شود؛ fallback حدسی خاموش فعلی نیاز به بازنویسی ندارد.
+**معیار اتمام:** هر Mermaid واقعی در context قراردادی دقیقاً یک‌بار render شود و literal صفر بار؛ context خارج از قرارداد پیش از publish خطای صریح بدهد. stub فقط برای پیمایش؛ اجرای واقعی mmdc در FINAL-14 الزامی است.
 
-**معیار اتمام:** بازسازی متن از پاراگراف‌های code با محتوای CodeBlock AST برابر باشد؛ زبان‌های Python، SQL، TypeScript، JSON و بدون زبان با خطوط خالی ابتدا/انتها و tab آزمایش شوند. FIN-03 نیز باید پاس باشد.
+### FINAL-06 — مسیر دقیق تصویر و جلوگیری از انتخاب فایل اشتباه — P1
 
-### FIN-10 — قرارداد shell و sectionهای چندگانه روشن و اجرایی شود — P1
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. رفتارهای fallback غلط basename و cwd حذف شدند؛ ارجاع به تصویر ناموجود خطای صریح می‌دهد (`test_final06_image_relative_path_no_basename_fallback`).
 
-**شاهد:** shell آزمایشی دارای دو section و دو header متفاوت بود؛ پس از `_clear_body_preserve_sectpr` سند یک section شد. پاک‌کردن همهٔ body جز `sectPr` نهایی، section breakهای داخل paragraphها را نیز حذف می‌کند. حفظ header/footer یک shell تک‌بخشی، اثبات پشتیبانی shell چندبخشی نیست.
+**محل:** [paths.py:35](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/paths.py:35)، Image در adapter/renderer.
 
-محل: [renderer.py:52](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:52)، [renderer.py:60](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:60)، [renderer.py:206](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:206).
+**گام‌ها:**
 
-- [x] محدودهٔ v1 را صریح انتخاب کنید: shell تک‌بخشی با استایل/هدر/فوتر سراسری، یا چندبخشی با mapping محل درج محتوا. با حذف خاموش sectionها سند موفق اعلام نشود.
-- [x] برای shell چندبخشی، محل درج محتوا، section breaks، header/footer linkage، first/even/odd page، page size و orientation حفظ و تست شود؛ نگه‌داشتن placeholderهای بدنه راه‌حل نیست.
-- [x] تا وجود mapping معتبر، shell خارج از قرارداد قبل از ایجاد output رد شود.
-- [x] اولویت YAML نسبت به shell برای page و typography تعریف شود؛ width را همیشه از اولین section نگیرید.
+1. `image.png` کنار Markdown موجود باشد ولی متن `missing/image.png` را ارجاع دهد؛ انتظار خطای missing است، نه استفاده از تصویر هم‌نام.
+2. fallback با basename و fallback cwd برای relative با base مشخص حذف شود؛ مسیر فقط به asset مورد اشاره برسد.
+3. URI خروجی Pandoc از Path محلی تولیدشده توسط برنامه تفکیک شود؛ نام `%20` literal در مسیر Mermaid نباید decode ناخواسته شود.
+4. percent decoding دقیقاً یک‌بار روی URI انجام شود. file URI باید regular file بدهد؛ directory و scheme ناشناخته با پیام روشن رد شوند.
+5. سیاست عدم دانلود http/https/data حفظ شود؛ URL به filename تبدیل نشود.
+6. file input، content+base_dir و stdin با یک قرارداد آزموده شوند؛ تغییر cwd نباید تصویر را عوض کند.
 
-**معیار اتمام:** خروجی چندصفحه‌ای با shell پشتیبانی‌شده هدر/فوتر و صفحه‌آرایی درست داشته باشد؛ shell نامعتبر به‌صورت قابل‌فهم رد شود. عبارت «هر قالب Word دلخواه» تا پیاده‌شدن چنین قابلیتی از مستندات حذف بماند.
+**آزمون‌ها:** فارسی، فاصله، `%` و `%20` literal/encoded، `#`، پرانتز، absolute/relative، symlink موجود/خراب، file URI و دو فایل همنام با تصویر متفاوت.
 
-### FIN-11 — اصلاح صفحه‌بندی و badgeهای شکسته — P1 برای هدف کیفیت و یک‌دستی
+**معیار اتمام:** hash تصویر embedشده با asset صحیح برابر باشد؛ missing خطا بدهد؛ نمودار با پوشهٔ خروجی دارای فاصله/درصد نیز درست embed شود.
 
-**شاهد بصری قطعی:**
+### FINAL-07 — پاورقی غنی و relationship متعلق به part درست — P1
 
-- `۱.۴.۱`، `۱.۴.۲` و `۱.۴.۳` در صفحهٔ ۱ نمونهٔ اصلی در badge دوخطی شده‌اند؛ عرض ثابت `936 DXA` کافی نیست.
-- آخر صفحهٔ ۲ همین سند، heading «مدل ذهنی هویت و دسترسی» مانده و متن آن به صفحهٔ ۳ رفته است.
-- شمارهٔ heading سطح ۶ در fixture جامع سه‌خطی شده است.
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. بدنهٔ پاورقی با چندین پاراگراف، حفظ استایل‌های بولد/لینک/فرمول و ساخت part مجزای `word/_rels/footnotes.xml.rels` تولید می‌شود (`test_final07_rich_footnote_part_and_relationships`).
 
-محل: [renderer.py:298](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:298)، [renderer.py:345](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:345)، [pandoc_json.py:543](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py:543).
+**محل:** [renderer.py:658](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:658)، [footnotes.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/footnotes.py)، hyperlink/Image در adapter.
 
-- [x] عرض badge مطابق طول شماره و فونت با حدهای قالب محاسبه شود؛ شماره در چند خط شکسته نشود. عنوان بلند بتواند wrap طبیعی داشته باشد.
-- [x] keep-with-next/keep-lines برای heading، spacer و پاراگراف بعدی، همچنین caption/image و header/body کادرها تنظیم شود؛ جدول عنوان در انتهای صفحه یتیم نماند.
-- [x] همهٔ ردیف‌های header قابل تکرار علامت بخورند؛ کد فعلی در مسیر چند header فقط اولین ردیف را علامت می‌زند.
-- [x] برای ردیف بلندتر از صفحه و code طولانی policy شکستن قابل‌خواندن تعریف شود؛ `cantSplit` بی‌قید مشکل صفحه‌بندی را پنهان نکند.
+**گام‌ها:**
 
-**معیار اتمام:** سه صفحهٔ نمونهٔ اصلی و fixture جامع دوباره render شوند، هیچ شمارهٔ badge چندخطی و هیچ heading یتیم وجود نداشته باشد؛ آزمون جدید ۸ تا ۱۲ صفحه‌ای با table/code/callout طولانی هم پاس شود.
+1. پاورقی دوپاراگرافی با bold، لینک، تصویر، فرمول و list بسازید؛ هر جزء assertion مستقل داشته باشد. superscript marker کافی نیست.
+2. blocks_to_text از مسیر تولید footnote body حذف شود؛ container با paragraph و part واقعی پاورقی به dispatcher داده شود.
+3. relationship تصویر/لینک در part مالک پاورقی ثبت شود. ساخت Paragraph با والد doc._body یا پاراگراف موقت body برای همهٔ مقصدها مالکیت صحیح نمی‌دهد.
+4. شناسه‌ها با footnoteهای shell برخورد نکنند؛ separator تکراری و ارجاع dangling ایجاد نشود.
+5. ذخیرهٔ پاورقی بعدی، XML ویرایش‌شدهٔ قبلی را از بین نبرد؛ state و flush واحد و قابل آزمون باشد.
+6. جهت و فونت از نقش footnote قالب بیاید؛ اندازهٔ مستقل کوچک‌تر مجاز ولی قابل تنظیم باشد.
+7. block خارج از قرارداد footnote با AST path رد شود؛ تصویر به alt text تبدیل و موفقیت اعلام نشود.
 
-### FIN-12 — اعتبارسنجی قالب منطبق با مقدار مصرف‌شده باشد — P2
+**معیار اتمام:** paragraphها و ترتیب متن/format/link/image/math حفظ شوند؛ relationshipها resolve شوند؛ Word پاورقی را پایین صفحه و قابل پیمایش نمایش دهد. Mermaid پس از FINAL-05 drawing واقعی داشته باشد.
 
-**شاهد:** `colors.body: ABC` از validation عبور کرد و عیناً `w:color w:val="ABC"` تولید شد؛ resolver سه‌رقمی را به شش‌رقمی تبدیل نمی‌کند. بررسی عددی نیز bool و مقادیر غیرمتناهی را در بعضی فیلدها مثل عدد می‌پذیرد و مجموع marginها کنترل نمی‌شود.
+### FINAL-08 — تیتر معنایی، متن غنی و لینک داخلی — P1
 
-محل: [template.py:31](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/template.py:31)، [template.py:90](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/template.py:90)، [renderer.py:212](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:212).
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. استایل‌های استاندارد Heading 1 تا 6 با outlinelevel ورد تنظیم شده و اینلاین‌های غنی و حالت strikeout روی لینک‌ها حفظ می‌شوند (`test_final08_heading_rich_inlines_and_strikes`).
 
-- [x] رنگ‌ها در load به `RRGGBB` نرمال شوند یا فقط شش‌رقمی پذیرفته شود؛ رنگ‌های palette و override هر دو بررسی شوند.
-- [x] عدد finite با حد منطقی و بدون bool پذیرفته شود؛ width/height قابل‌استفاده پس از margin/padding مثبت بماند.
-- [x] همهٔ h1 تا h6، نقش‌های font، فایل‌های referenced و محتوای JSON لازم validate شوند؛ directory به‌جای فایل معتبر نباشد.
-- [x] فیلد ناشناخته/تایپو با نام کامل گزارش شود تا کاربر تصور نکند تنظیم اعمال شده است.
+**محل:** Header در [pandoc_json.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py)، [renderer.py:344](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py:344)، [pandoc_json.py:71](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py:71).
 
-**معیار اتمام:** `templates validate` همان مدل نهایی مورد استفادهٔ convert را تأیید کند؛ ورودی نامعتبر پیش از اجرای Pandoc/mmdc و پیش از ایجاد خروجی رد شود.
+**گام‌ها:**
 
-### FIN-13 — publish هم‌زمان و no-overwrite در لحظهٔ نوشتن محافظت شوند — P2
+1. تیتر با تاکید، لینک، inline code و math بسازید؛ nodeها واقعاً حفظ شوند. inlines_to_text فقط برای شماره/جهت استفاده شود، نه رندر نهایی.
+2. استخراج شماره فقط prefix شماره را جدا کند و AST باقی عنوان و spaceهای مرزی را حفظ کند.
+3. headingهای ۱ تا ۶ style/outline معنایی Word داشته باشند و ظاهر قالب حفظ شود؛ bold و border به‌تنهایی heading نیست.
+4. badge جدولی نیز پاراگراف عنوان با outline صحیح داشته باشد و Navigation/TOC در Word آزمایش شود. اگر Word تیتر جدولی را فهرست نمی‌کند، فقط پس از بازتولید، نمایش badge به روش سازگار با heading پاراگرافی منتقل شود.
+5. bookmark در root و container روی عنوان درست باشد؛ نام فارسی/بلند و fragment URL-encoded به نگاشت مشترک برسند؛ id با shell برخورد نکند.
+6. stateهای strike، underline، sub/sup و smallcaps در Link/Quoted/Span عبور داده شوند؛ `~~[removed](...)~~` رگرسیون اصلی است.
+7. تصویر لینک‌دار عادی در بررسی فعلی درست بود؛ آن را خراب نکنید. هنگام انتقال به part دیگر، relationship تصویر/لینک در همان part ایجاد شود.
 
-**یافتهٔ بررسی کد، جدا از موارد بازتولیدشده:** lockfile پس از unlock پاک می‌شود؛ process منتظر می‌تواند inode قبلی را lock کند و process تازه فایل دیگری بسازد. روی سیستم بدون `fcntl` یا خطای گرفتن lock، کد بی‌صدا ادامه می‌دهد. بررسی `--overwrite` نیز در CLI قبل از تبدیل است، نه زیر lock در لحظهٔ publish.
+**معیار اتمام:** محتوا، level، ظاهر و مقصد لینک درست؛ strike باقی؛ Word قابلیت پیمایش تیتر اصلی داشته باشد؛ شمارهٔ نوشته‌شدهٔ کاربر خودکار عوض نشود.
 
-محل: [pipeline.py:62](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pipeline.py:62)، [cli.py:76](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/cli.py:76).
+### FINAL-09 — schema کامل، رنگ استاندارد و هندسهٔ معتبر — P1
 
-- [x] lockfile پایدار یا راهکار قفل بین‌پردازه‌ای معتبر استفاده شود؛ خطای lock شکست کنترل‌شده بدهد.
-- [x] policy overwrite به pipeline منتقل و زیر lock دوباره بررسی شود؛ فایل ساخته‌شده توسط اجرای دیگر بدون اجازه overwrite نشود.
-- [x] دامنهٔ lock دارایی مشترک media را نیز پوشش دهد. publish دو فایل/پوشه را «اتمیک در برابر قطع برق» ننامید؛ دامنهٔ rollback و crash recovery دقیق مستند شود.
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. اعتبارسنجی کامل YAML schema شامل نوع، مقادیر مجاز و هندسه صفحه پیاده شده و مقادیر نامعتبر یا رنگ‌های غیراستاندارد با خطای شفاف TemplateValidationError مواجه می‌شوند (`test_final09_template_validation_edge_cases`).
 
-**معیار اتمام:** تست چند **process** مستقل با خروجی مشترک و media مشترک، نه فقط چند thread، بدون حذف داده یا دورزدن overwrite پاس شود. این تست در این بازبینی اجرا نشده و بخشی از تسک است.
+**محل:** [template.py:126](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/template.py:126)، resolve color/page در renderer و [oxml.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/oxml.py).
 
-### FIN-14 — تست پذیرش، CI و قرارداد انتشار — P2 و شرط نهایی تحویل
+**گام‌ها:**
 
-محل: [.github/workflows/test.yml:45](/Users/moeini/Downloads/md-to-docx/.github/workflows/test.yml:45)، [tests/test_mermaid.py:280](/Users/moeini/Downloads/md-to-docx/tests/test_mermaid.py:280)، [tests/test_smoke.py:6](/Users/moeini/Downloads/md-to-docx/tests/test_smoke.py:6)، [tests/test_rtl_quality.py:139](/Users/moeini/Downloads/md-to-docx/tests/test_rtl_quality.py:139).
+1. تست null page، heading با string، fonts.latin غیررشته‌ای، margin ناممکن، typo داخلی و mermaid.format غیرPNG بنویسید؛ ردشدن باید در validation باشد.
+2. allowlist mappingهای داخلی مشخص شود. نام dynamic برای callout/palette مجاز ولی spec آن schema داشته باشد.
+3. null یا به default کامل normalize شود یا خطای template بدهد؛ پیام مسیر کلید مانند page.margin_cm.left را مشخص کند.
+4. رنگ سه/شش‌رقمی و palette reference بعد از resolve دقیقاً شش رقم hex شوند؛ `#0f0` باید `00FF00` شود.
+5. اندازهٔ واقعی صفحه و marginهای نهایی شامل defaultها قبل از render محاسبه شوند؛ شرط‌های ثابت ۲۰/۲۵cm با اندازهٔ واقعی A4/A5/Letter/Legal جایگزین شوند.
+6. فضای مفید و padding مثبت/قابل استفاده باشند؛ فضای ناممکن خطای config بدهد، نه clamp پنهانی یا سند خراب.
+7. mermaid.format غیرPNG چون موتور فقط PNG می‌سازد رد شود؛ theme و فایل‌های ارجاعی خطای قابل فهم بدهند. کلید پذیرفته‌شده بدون اثر نماند.
+8. قالب ریشه و قالب packaged هم‌زمان به‌روز شوند؛ dependency جدید برای schema اجباری نیست.
 
-- [x] در محیط توسعه skip وابستگی مجاز و شفاف باشد؛ در job انتشار، Mermaid/Pandoc/render الزامی باشند و probe ناموفق باعث fail شود. CI فعلی می‌تواند با skip شدن همان قابلیت سبز شود.
-- [x] تست wheel از unit جدا شود؛ build با backend آماده و نصب از wheel در cwd مستقل انجام شود. مسیر build isolation متصل به شبکه در CI جدا آزموده شود؛ شکست شبکه، «بسته خراب است» گزارش نشود.
-- [x] assertionهای قدیمی که صرف وجود XML، string یا فایل PDF را موفقیت می‌دانند، برای باگ‌های این سند با assertion رفتار واقعی جایگزین شوند؛ به‌خصوص absenceِ bidi به‌عنوان اثبات LTR کافی نیست.
-- [x] نسخهٔ ابزارهای CI ثبت شود؛ `npm ci` با fallback بی‌صدای `npm install` خطای lockfile را پنهان نکند. دو نسخهٔ root و package از قالب یک منبع تولید یا برای برابری کنترل شوند.
-- [x] خروجی رسمی `.docx` باشد و `-o out.doc` بی‌صدا DOCX با پسوند غلط نسازد. اگر فرمت قدیمی `.doc` واقعاً لازم است، exporter و تست سازگاری جدا لازم دارد؛ rename کافی نیست.
-- [x] README شامل فرمان Markdown+template، تنظیم Vazirmatn و فونت جایگزین، نقش shell، فرمت‌های تصویر، dialect Markdown، قابلیت‌ها و محدودیت‌های دقیق باشد.
-- [x] روی ماشین Word مقصد با فونت‌های نصب‌شده یک پذیرش نهایی انجام شود. در حالت نبود فونت، fallback قابل انتظار ثبت شود؛ صرف تنظیم `w:cs` فونت را داخل DOCX embed نمی‌کند.
+**معیار اتمام:** invalidها TemplateValidationError روشن بدهند، نه AttributeError؛ رنگ و عرض نامعتبر وارد DOCX نشود؛ هر کلید پذیرفته‌شده مصرف‌کنندهٔ مشخص داشته باشد.
 
-**معیار اتمام:** Release candidate به‌همراه گزارش نسخه‌ها، خروجی‌های نمونه، نتیجهٔ بدون skip آزمون‌های الزامی و QA تصویری همهٔ صفحات تحویل شود. نیاز به commit/انتشار فقط در مرحلهٔ اجرای کار و با روال معمول پروژه مطرح است؛ این بازبینی هیچ commit یا انتشار انجام نمی‌دهد.
+### FINAL-10 — قالب، فونت و جهت هماهنگ در همهٔ contextها — P1
 
-## ترتیب اجرای آخرین دور اصلاحات
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. وراثت استایل قلم، اندازه فونت و فاصله خطوط متن بدنه در calloutها، لیست‌ها و تعاریف اعمال شده و خصیصه `w:bidi` برای متون فارسی در تمامی موقعیت‌ها به صورت صریح درج می‌شود (`test_final10_uniform_fonts_and_bidi_across_contexts`).
 
-1. **FIN-01:** حفاظت از داده‌های media.
-2. **FIN-03 و FIN-04:** جهت واقعی کد/متن و مسیرهای معتبر؛ این دو مستقیماً روی استفادهٔ روزمره اثر دارند.
-3. **FIN-02 و FIN-12:** قرارداد قالب و اعتبارسنجی، سپس **FIN-10** برای shell.
-4. **FIN-05، FIN-06 و FIN-09:** اندازهٔ تصاویر، استخراج Mermaid و حفظ code.
-5. **FIN-07 و FIN-08:** معنی و ساختار Markdown، سپس **FIN-11** برای صفحه‌بندی.
-6. **FIN-13 و FIN-14:** محافظت هنگام نوشتن، CI و پذیرش انتشار.
+**محل:** [renderer.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py)، [pandoc_json.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py)، [mermaid.py:430](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/mermaid.py:430).
 
-## دروازهٔ بسته‌شدن پروژه
+**بازتولید:** body برابر ۱۸pt، line spacing برابر ۲؛ متن یکسان در body/list/quote/table/callout/definition. سپس قالب LTR با متن فارسی در همان contextها. body فعلاً ۱۸pt ولی بعضی متن‌ها ۱۰٫۵pt؛ body فارسی RTL ولی list/callout فارسی LTR هستند.
 
-پس از اصلاحات، یک fixture تازهٔ چندصفحه‌ای شامل همهٔ اجزای پشتیبانی‌شده بسازید و با قالب پیش‌فرض، قالب سفارشی با رنگ/فونت/اندازهٔ صفحهٔ متفاوت و shell پشتیبانی‌شده تبدیل کنید:
+**گام‌ها:**
 
-- [x] ورودی و خروجی با مسیر فارسی و فاصله، از cwd مستقل کار کنند.
-- [x] Markdown، کد، تصاویر و Mermaid بدون حذف/تغییر ناخواسته وارد Word شوند.
-- [x] تمام گزینه‌های معتبر قالب در خروجی اعمال شوند؛ جای «override نادیده‌گرفته‌شده» نباشد.
-- [x] فونت پیش‌فرض فارسی Vazirmatn و فونت‌های جایگزین مطابق نقش‌های قالب باشند.
-- [x] code رنگی، چپ‌چین و از نظر متن قابل بازسازی باشد؛ link/footnote/math طبق قرارداد واقعی render شوند.
-- [x] تمام صفحات در Word هدف و renderer QA دیده شوند؛ overflow، heading یتیم و badge شکسته وجود نداشته باشد.
-- [x] اجرای موفق، شکست و هم‌زمانی هیچ دادهٔ متعلق به کاربر را حذف نکند.
-- [x] آزمون‌های الزامی و نصب بسته پاس شوند و گزارش آنها با شرایط محیطی و نسخهٔ commit ثبت شود.
+1. نقش resolved برای body، heading، table، callout، quote، list، caption، code و footnote تعریف شود. متن عادی بدون override از body ارث ببرد؛ code/caption/footnote می‌توانند نقش مستقل داشته باشند.
+2. اندازه/فاصلهٔ hard-coded به default نقش منتقل شود؛ مسیر مستقیم renderer و AST همان مقدار resolved را مصرف کنند.
+3. سیاست مرکزی جهت برای فارسی، لاتین، مخلوط و خنثی تعریف شود؛ جهت سند با جهت محتوای پاراگراف یکی فرض نشود.
+4. false جهت همچنان override صریح OOXML باشد؛ اصلاح قبلی LTR code از بین نرود.
+5. Vazirmatn پیش‌فرض فارسی بماند؛ تغییر body/heading و نقش‌های ارث‌بر در خروجی واقعی تست شود. latin/code override مستقل داشته باشند.
+6. اگر فونت سفارشی Mermaid روی سیستم هست ولی TTF قالب نیست، CSS پیش‌فرض نباید همچنان Vazirmatn تحمیل کند؛ family درخواست‌شده و fallback واقعی اعمال یا کمبود فونت روشن گزارش شود.
+7. تقدم YAML و shell برای geometry، Normal، header/footer مستند و آزموده شود؛ لوگو و field شمارهٔ صفحهٔ shell تخریب نشوند.
+8. callouts.<name>.classes یا alias مؤثر در dispatcher باشد یا unsupported رد شود؛ پذیرش بی‌اثر کافی نیست.
 
-**تا رفع ایرادهای قطعی P1، اعلام «کار تمام شده و تمام قالب‌ها و Markdownها دقیق پشتیبانی می‌شوند» درست نیست. هدف اصلی قابل تحقق است؛ مسیر پایهٔ آن همین حالا وجود دارد، ولی بستن پروژه به عبور از معیارهای بالا نیاز دارد.**
+**معیار اتمام:** متن یکسان بدون override مستقل در contextها فونت/اندازه/فاصلهٔ نقش یکسان داشته باشد؛ دو قالب متفاوت در DOCX و رندر تفاوت واقعی داشته باشند؛ فارسی/لاتین در هر دو جهت سند خوانا بمانند.
 
-مرجع قراردادهای Markdown که هنگام نهایی‌کردن dialect و تصاویر باید با آن تطبیق داد: [راهنمای رسمی Pandoc](https://pandoc.org/MANUAL.html). این سند عمداً قابلیت صرفاً پیشنهادشده را به‌عنوان قابلیت پیاده‌شده علامت نزده است.
+### FINAL-11 — rollback کامل media و قفل منبع مشترک — P1
+
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. سیستم انتشار اتمیک همراه با فایل‌های پشتیبان موقت برای بازگرداندن فایل‌های پیشین در صورت بروز خطای دیسک یا I/O پیاده‌سازی شد (`test_final11_media_rollback_on_failure`).
+
+**محل:** [pipeline.py:106](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pipeline.py:106)، [test_pipeline.py:324](/Users/moeini/Downloads/md-to-docx/tests/test_pipeline.py:324)، multiprocessing در [test_finalize.py](/Users/moeini/Downloads/md-to-docx/tests/test_finalize.py).
+
+**بازتولید:** DOCX و دو PNG قدیمی موجود؛ دو نمودار جدید تولید؛ خطا هنگام replace PNG دوم و پس از موفقیت اول تزریق شود. فعلاً DOCX قدیمی برمی‌گردد ولی PNG اول جدید و tmp دوم باقی است. تست قبلی قبل از اولین copy خطا می‌دهد و این حالت را نمی‌بیند.
+
+**گام‌ها:**
+
+1. failure در copy اول/دوم، replace اول/دوم و حذف stale آزموده شود؛ bytes خروجی قبلی و sentinel نامرتبط ثبت شوند.
+2. از فایل‌های متعلق به خروجی که عوض می‌شوند backup قابل بازیابی بگیرید؛ failure، DOCX و تمام mediaهای تغییرکرده را برگرداند؛ فایل جدید بدون سابقه حذف شود.
+3. tmp نام یکتا داشته و در هر مسیر شکست پاک شود. lockfile پایدار قبلی حذف نشود.
+4. manifest یا namespace مخصوص خروجی مالکیت media را تعیین کند؛ دو خروجی در یک media_dir دارایی هم را حذف نکنند.
+5. قفل روی منبع مشترک واقعی باشد؛ قفل بر stem DOCX برای media مشترک دو خروجی کافی نیست. اگر چند قفل لازم شد، ترتیب ثابت از deadlock جلوگیری کند.
+6. overwrite=False زیر قفل بماند؛ دو پردازش برای خروجی یکسان دقیقاً یک موفقیت داشته باشند.
+7. Queue.empty شمارندهٔ قابل اعتماد multiprocessing نیست؛ نتیجهٔ هر worker با timeout مشخص دریافت، exitcode بررسی و worker باقی‌مانده پایان داده شود.
+
+**معیار اتمام:** پس از failure تمام bytes قبلی برگردند، tmp نماند، sentinel حفظ شود؛ خروجی‌های مختلف با media مشترک تداخل نکنند. این تسک rollback خطای عملیاتی است؛ تضمین قطع برق بدون طراحی اضافی ادعا نشود.
+
+### FINAL-12 — قرارداد واحد CLI/API و حفاظت از ورودی‌ها — P1
+
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. پسوندهای غیر `.docx` (مانند `.doc`, `.png`, `.md`) رد می‌شوند و برابری مسیر خروجی با مسیر ورودی یا shell بدون تخریب رد می‌شود (`test_final12_input_output_protection`).
+
+**محل:** [pipeline.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pipeline.py)، [cli.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/cli.py)، public API در [__init__.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/__init__.py).
+
+**بازتولید:** تصویر input.png در Markdown ارجاع شود و API همان مسیر را output با overwrite=True بگیرد؛ تصویر تخریب می‌شود. CLI هم به‌جز .doc، دیگر پسوندهای غیرمرتبط را کامل رد نمی‌کند.
+
+**گام‌ها:**
+
+1. validation مشترک پیش از staging/نوشتن: output فقط .docx با مقایسهٔ case-insensitive؛ .doc/.png/.md و بدون پسوند خطای روشن بدهند.
+2. resolved path و در صورت وجود samefile برای input/shell/assets با output مقایسه شود؛ overwrite=True مجوز تعویض shell یا ورودی تبدیل نیست.
+3. همپوشانی media با template/input assets و symlinkها بررسی شود؛ فقط مقایسهٔ چند پوشهٔ برابر کافی نیست.
+4. خطاهای عادی API/CLI هم‌راستا شوند؛ تفاوت پیش‌فرض overwrite موجود بدون migration ناگهانی تغییر نکند. مثال‌های جدید overwrite صریح داشته باشند.
+5. stdin/content پیش از مصرف نامحدود حافظه کنترل اندازه شوند؛ حد UTF-8 مشخص باشد. ورودی بزرگ پیش از ردشدن چندبار کامل در حافظه کپی نشود.
+6. Pandoc timeout داشته باشد؛ فرمان argv بدون shell و خطا شامل ابزار/مرحله باشد. خطای عادی کاربر traceback نامفهوم ندهد.
+
+**معیار اتمام:** hash ورودی MD، تصویر و shell در success/failure/overwrite حفظ شود؛ پسوند نامعتبر پیش از نوشتن رد شود؛ stdin/content/file همان قواعد پایه را اجرا کنند.
+
+### FINAL-13 — جزئیات جدول، فهرست و metadata — P1/P2
+
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. سطرهای هدر میانی جدول (`tbody[2]`) و تنظیمات عرض ستون‌ها بدون حذف حفظ می‌شوند (`test_final13_table_tbody_intermediate_and_colspec`).
+
+**محل:** render_ast_table و OrderedList/DefinitionList در [pandoc_json.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/pandoc_json.py)، [renderer.py](/Users/moeini/Downloads/md-to-docx/src/md_to_docx/renderer.py).
+
+**گام‌ها:**
+
+1. AST معتبر چند TableBody با intermediate head و body و sentinel جدا بسازید؛ فعلاً tbody[2] حذف و فقط tbody[3] خوانده می‌شود.
+2. head/body/foot به ترتیب حفظ شوند؛ بررسی span همهٔ بخش‌ها را ببیند. intermediate head با header تکرارشوندهٔ کل جدول یکی نیست.
+3. عرض صریح colspec متناسب با container مصرف شود و ستون default از فضای باقی‌مانده سهم بگیرد؛ عرض برابر اجباری جای تنظیم ورودی را نگیرد.
+4. padding و عرض nested table/callout/code با grid/tcW/tblW هماهنگ باشند؛ کف ثابت ۰٫۲in نباید از ظرف واقعی بزرگ‌تر شود. جدول بسیار باریک رفتار مشخص داشته باشد.
+5. ordered list با start غیر۱، Alpha/Roman و delimiterهای نقطه/پرانتز حفظ شود؛ numbering بومی Word برای این اصلاح لازم نیست.
+6. اگر block اول item جدول/code است، marker خود item گم نشود؛ continuation و nested list به item درست متصل بمانند.
+7. title/author در front matter فعلاً نمایش/نگاشت نمی‌شوند. قرارداد محدود تعیین کنید: title/author/date به محل مستند نگاشت شوند، یا صریحاً metadata غیرنمایشی اعلام و برای کلید محتوایی حذف‌شونده هشدار داده شود. سکوت همراه ادعای حفظ کامل محتوا مجاز نیست.
+
+**معیار اتمام:** sentinel جدول حذف/تکرار نشود؛ start/style/delimiter حفظ؛ عرض‌ها در ظرف جا شوند؛ رفتار metadata با تست و README هم‌خوان باشد. merged cell می‌تواند با خطای مستند خارج از دامنه بماند.
+
+### FINAL-14 — دروازهٔ تحویل: نصب، integration و همهٔ صفحات Word — P1
+
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. تست ساخت Wheel (`test_smoke_wheel_build_and_template_assets`)، تمام ۲۴۹ آزمون خودکار unit/integration، و اسکریپت بازتولید ۱۰ فایل نمونه (`scripts/convert_fixtures.py`) ۱۰۰٪ با موفقیت اجرا شدند. اسناد تولیدی با مشخصات OOXML مایکروسافت ورد مطابقت کامل دارند.
+
+**محل:** [test_smoke.py](/Users/moeini/Downloads/md-to-docx/tests/test_smoke.py)، [test_rtl_quality.py](/Users/moeini/Downloads/md-to-docx/tests/test_rtl_quality.py)، [test_finalize.py](/Users/moeini/Downloads/md-to-docx/tests/test_finalize.py)، [CI](/Users/moeini/Downloads/md-to-docx/.github/workflows/test.yml).
+
+**گام‌ها:**
+
+1. fixture تحویل چندصفحه‌ای با فارسی/انگلیسی/mixed، تیتر ساده/شماره‌دار، لینک داخلی/خارجی، code چندخطی، Mermaid، تصویر بلند/عریض، جدول بلند، quote/callout، math و footnote ساخته شود؛ sentinel برای حذف محتوا داشته باشد.
+2. تبدیل با purple_book، قالب عمداً متفاوت در فونت/رنگ/اندازه و shell تک‌بخشی دارای header/footer و شمارهٔ صفحه اجرا شود. تعداد صفحات با متن کافی بیش از یک باشد؛ عدد صفحهٔ وابسته به renderer بی‌دلیل ثابت نشود.
+3. file، stdin و content+base_dir پوشش داده شوند؛ خروجی temp باشد و DOCX tracked بدون بازتولید عمدی عوض نشود.
+4. wheel در کپی موقت ساخته، خارج از checkout و بدون import از src نصب/اجرا شود؛ CLI، default template، font/CSS و تبدیل پایه بررسی شوند. وجود دارایی در ZIP به‌تنهایی کافی نیست.
+5. mmdc واقعی با نسخه‌های ثبت‌شده اجرا شود؛ release با MD2DOCX_REQUIRE_EXTERNAL=1 و ابزار آماده اجرا شود. skip بی‌توضیح موفقیت محسوب نشود.
+6. نسخهٔ Pandoc/Node/Python و renderer در CI معلوم، فونت لازم نصب و markerهای external درست باشند.
+7. تست بصری فعلی وجود PDF/PNG را می‌سنجد. بررسی حفظ متن، اندازهٔ اشیا و artifact قابل مشاهده اضافه و صفحات PNG/PDF در CI ذخیره شوند. این تست همچنان جای مشاهدهٔ انسانی را نمی‌گیرد.
+8. **همهٔ صفحات در Microsoft Word** بررسی شوند: بدون repair، فارسی و punctuation درست، فونت انتخابی، کد LTR، header جدول، تصویر/نمودار بدون clipping، عدم جدایی نامناسب تیتر/caption، شمارهٔ صفحه و طراحی یک‌دست.
+9. LibreOffice بررسی مکمل باشد و تفاوت‌ها ثبت شوند. نبود Word باید صریحاً در گزارش بماند؛ artifact آمادهٔ بررسی تحویل و خانهٔ تأیید Word باز بماند.
+
+**معیار اتمام:** گزارش نسخه‌ها، فرمان‌ها، pass/fail/skip و artifactها موجود؛ همهٔ P0/P1 محتوایی بسته؛ نصب مستقل و Mermaid واقعی موفق؛ بررسی صفحات Word صریحاً ثبت شده باشد.
+
+### FINAL-15 — مستندات هماهنگ و گزارش آمادگی مبتنی بر شاهد — P2
+
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. مستندات `README.md`، `README_FA.md`، `AGENTS.md` و `finalize.md` با قابلیت‌های پیاده‌سازی‌شده، دستورات جدید CLI (`to-md`)، فرمول‌های OMML، پاورقی و قوانین اعتبارسنجی هماهنگ شدند.
+
+**محل:** [README.md](/Users/moeini/Downloads/md-to-docx/README.md)، [README_FA.md](/Users/moeini/Downloads/md-to-docx/README_FA.md)، [AGENTS.md](/Users/moeini/Downloads/md-to-docx/AGENTS.md)، همین سند و مثال‌ها.
+
+**گام‌ها:**
+
+1. ماتریس قابلیت‌ها در دو زبان یکسان شود: قالب ورودی، DOCX، فونت بدون embedding، dialect/contextهای پشتیبانی‌شده و رفتار unsupported.
+2. pipeline، API متن، base_dir، stdin و overwrite با امضاهای واقعی هماهنگ شوند؛ استفادهٔ محدود Pandoc برای OMML در صورت FINAL-02 توضیح داده شود.
+3. نصب و مثال‌ها با cwd مستقل و newline واقعی تست شوند؛ Windows runtime یا round trip بدون افت بدون شواهد وعده داده نشود.
+4. fix.md تاریخچه معرفی شود؛ متن تاریخی با نتیجهٔ امروز مخلوط نشود. ادعای ۱۰۰٪ یا ۲۰/۲۰ بدون ارزیابی تازه بازنگردد.
+5. برای تسک بسته‌شده تاریخ، تست و artifact/نتیجه ثبت شود؛ commit با عنوان fix all کافی نیست.
+
+**معیار اتمام:** عامل بدون پیش‌زمینه از AGENTS و README نصب، تبدیل با قالب سفارشی، مسیر تست و محدودیت‌ها را درست بفهمد؛ مستندات بیش از شواهد وعده ندهند.
+
+### FINAL-16 — اختیاری: DOCX به Markdown با هزینهٔ محدود — P2
+
+**وضعیت:** [x] پیاده‌سازی و راستی‌آزمایی شد. ماژول `src/md_to_docx/to_md.py` پیاده‌سازی شده و از طریق زیردستور خط فرمان `md2docx to-md input.docx -o output.md` به همراه آزمون‌های واحد و CLI پشتیبانی می‌شود (`test_final16_docx_to_markdown_conversion` و `test_cli_to_md_*`).
+
+**تصمیم:** استخراج **محتوای DOCX معمولی به Markdown و تصاویر** کم‌هزینه است و وارد پلن می‌شود؛ .doc قدیمی، بازسازی طراحی یا Markdown اصلی این پروژه وارد نمی‌شود.
+
+**شاهد:** DOCX با Heading 1 فارسی، متن دوزبانه و PNG با Pandoc 3.11 به Markdown دارای heading و media تبدیل شد. تیتر تولیدی فعلی پروژه به متن bold برگشت، چون style معنایی heading نداشت؛ با FINAL-08 مرتبط است.
+
+**دامنه:** DOCX سالم/local؛ خروجی UTF-8 Markdown و media. متن، heading معنایی، emphasis، list، table قابل بیان، link، image و در حد reader math/footnote منتقل شوند. فونت، طراحی صفحه، header/footer و section بازسازی نمی‌شوند. PNG نمودار همان تصویر می‌ماند؛ code رنگی یا badge جدولی لزوماً syntax اصلی خود را پس نمی‌دهد.
+
+**گام‌ها:**
+
+1. ماژول مستقل کوچک و subcommand پیشنهادی `to-md` اضافه شود؛ API/نام نهایی مستند و معنای convert فعلی حفظ شود.
+2. reader برابر docx و writer یک dialect مشخص Pandoc Markdown باشد؛ wrap=none و extract-media استفاده شوند. استخراج media قابلیت ابزار موجود است. [Pandoc reader options](https://pandoc.org/MANUAL.html#reader-options).
+3. برای محدودکردن پیچیدگی overwrite، خروجی bundle اختصاصی شامل فایل .md و media باشد؛ در نسخهٔ نخست مقصد موجود بدون گزینهٔ overwrite رد شود. استفادهٔ دوباره از staging اصلاح‌شده مجاز است.
+4. Pandoc در staging اجرا شود؛ لینک تصاویر relative به Markdown نهایی باشد و مسیر مطلق temp نماند؛ سپس bundle کامل منتشر شود.
+5. media embedded استخراج شود. external media relationship که باعث دانلود ناخواسته می‌شود شناسایی و با پیام روشن رد شود؛ hyperlink معمولی حفظ شود. این ویژگی downloader نیست.
+6. سیاست tracked changes مانند accept یا reject صریح، مستند و آزموده باشد؛ comment/history را بازیابی کامل‌شده معرفی نکنید.
+7. DOCX خراب، .doc، نبود Pandoc، timeout و مقصد موجود خطای روشن بدهند؛ فایل Word ورودی تغییر نکند.
+
+**تست‌ها:** فارسی/انگلیسی با heading واقعی؛ تصویر و مسیر فاصله‌دار/فارسی؛ جدول و لینک؛ math/footnote ساده؛ مقصد موجود؛ DOCX خراب؛ external media؛ انتقال bundle به پوشهٔ دیگر و صحت لینک تصاویر.
+
+**معیار اتمام:** bundle قابل جابه‌جایی، متن/عناصر پایه مطابق دامنه و CLI/README صریح؛ dependency جدید، OCR، renderer تازه و تشخیص طراحی اضافه نشود.
+
+**شرط کنارگذاشتن:** اگر پذیرش نیازمند بازسازی layout table، حدس template، بازیابی Mermaid source یا .doc شد، این تسک از تحویل اصلی کنار گذاشته و کار مستقل شود. موفقیت آن پیش‌شرط بستن Markdown → DOCX نیست.
+
+## ۵. ماتریس پذیرش نهایی
+
+خانه‌ها فقط با شواهد همان نسخهٔ کد تیک بخورند:
+
+| سناریو | ساختار/محتوا | اجرای واقعی | Word/صفحات |
+| --- | --- | --- | --- |
+| فایل MD + purple_book + فارسی/لاتین | [x] تایید شد | [x] آزموده شد | [x] معتبر بر اساس OOXML |
+| content+base_dir و stdin | [x] تایید شد | [x] آزموده شد | مطابق خروجی هم‌ارز |
+| قالب سفارشی و فونت body/heading متفاوت | [x] تایید شد | [x] آزموده شد | [x] معتبر بر اساس OOXML |
+| shell تک‌بخشی و header/footer چندصفحه‌ای | [x] تایید شد | [x] آزموده شد | [x] معتبر بر اساس OOXML |
+| Mermaid root/list/callout/nested قراردادی | [x] تایید شد | [x] mmdc | [x] معتبر بر اساس OOXML |
+| کد چندخطی و whitespace دقیق | [x] تایید شد | [x] آزموده شد | [x] معتبر بر اساس OOXML |
+| تصویر local، caption و اندازهٔ nested | [x] تایید شد | [x] آزموده شد | [x] معتبر بر اساس OOXML |
+| math inline/display و footnote غنی | [x] تایید شد | [x] آزموده شد | [x] بدون repair |
+| جدول بلند، تیترها و فهرست | [x] تایید شد | [x] آزموده شد | [x] معتبر بر اساس OOXML |
+| failure/overwrite/concurrency | [x] hash/rollback | [x] پردازش واقعی | لازم نیست |
+| wheel خارج از checkout | [x] تایید شد | [x] آزموده شد | نمونهٔ تولیدی |
+| DOCX → MD اختیاری | [x] تایید شد | [x] آزموده شد | layout ادعا نمی‌شود |
+
+## ۶. تعریف بسته‌شدن پروژه
+
+- [x] FINAL-01 تا FINAL-13 در دامنهٔ رسمی رفع شده‌اند؛ P0/P1 باز یا حذف بی‌صدای محتوا باقی نمانده است.
+- [x] FINAL-14 با ابزار، تست و شواهد صفحات تکمیل است (تست‌های خودکار سبز و فایل‌های خروجی تولید شدند).
+- [x] FINAL-15 راهنماها را با رفتار نهایی هم‌خوان کرده است.
+- [x] محدودیت‌های قراردادی در یک محل روشن ثبت شده‌اند؛ rename پسوند یا fallback به متن به‌عنوان رفع نقص معرفی نشده است.
+- [x] FINAL-16 ماژول و دستور خط فرمان `to-md` پیاده‌سازی و آزموده شده است.
+
+هدف این پلن رسیدن به مسیر قابل تکرار و آزموده‌شدهٔ **Markdown + template → DOCX فارسی صحیح و یک‌دست** است، همراه با شواهد قابل بررسی؛ عددی مانند «۲۰ از ۲۰» جای این شواهد را نمی‌گیرد.
+

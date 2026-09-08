@@ -101,7 +101,7 @@ convert_markdown_to_docx(
 
 - **پایتون ۳.۱۱ یا بالاتر**
 - **[Pandoc](https://pandoc.org) نسخه ۳ به بعد** (فقط برای پارس مارک‌داون)
-- **Node.js نسخه ۱۸ به بعد** (جهت اجرای mermaid-cli)
+- **Node.js نسخه ۲۲.۱۲.۰ به بعد** (جهت اجرای mermaid-cli)
 - **گوگل کروم یا کرومیوم** (جهت رندر با Puppeteer)
 
 > [!TIP]
@@ -126,8 +126,8 @@ brew install pandoc
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -c constraints.txt -e ".[dev]"
-npm ci || npm install
-npx puppeteer browsers install chrome
+npm ci
+npx puppeteer browsers install chrome-headless-shell
 ```
 
 ---
@@ -148,8 +148,12 @@ md2docx convert chapter.md -o chapter.docx --template ./templates/my_theme
 # مشاهده و اعتبارسنجی قالب‌ها
 md2docx templates list
 md2docx templates validate purple_book
+
+# تبدیل معکوس DOCX به مارک‌داون و استخراج تصاویر
+md2docx to-md chapter.docx -o chapter.md
 ```
 
+- برای تبدیل معکوس DOCX به Markdown از دستور `md2docx to-md` استفاده می‌شود.
 - اگر پرچم `-o` داده نشود، خروجی با همان نام ورودی و پسوند `.docx` ساخته می‌شود.
 - فرمت قدیمی `.doc` پشتیبانی نمی‌شود و با پیام خطا متوقف می‌گردد.
 - نمودارهای Mermaid در کنار سند در پوشهٔ `{stem}_media` ذخیره می‌شوند و تمام تصاویر در خود فایل Word نیز embed می‌شوند تا سند به طور مستقل باز شود.
@@ -183,27 +187,60 @@ md2docx templates validate purple_book
 
 ---
 
-## ساختار پوشهٔ قالب‌ها (Templates)
+## قالب‌های از پیش ساخته‌شده (Templates)
 
-پوشهٔ پیش‌فرض `templates/purple_book/` ساختار استاندارد قالب را نشان می‌دهد:
+این مخزن شامل ۴ قالب آماده و استاندارد متناسب با انواع اسناد است:
 
-```
-templates/purple_book/
-├── config.yaml                 # نسخه الگو: ۱، رنگ‌ها، قلم‌ها و تعاریف کادرها
-├── mermaid.json                # تنظیمات و تم Mermaid
-├── mermaid.css                 # استایل و فونت اختصاصی رندر دیاگرام
-├── puppeteer.json              # تنظیمات مرورگر رندرکننده
-├── fonts/Vazirmatn-Regular.ttf # فونت آزاد وزیرمتن برای رندر تصاویر
-└── shell.docx                  # فایل پایه اختیاری Word (سربرگ و پاورقی کلی)
-```
+| نام قالب | اندازه صفحه | تراز پاراگراف | توضیحات |
+| :--- | :--- | :--- | :--- |
+| `purple_book` | A4 | `both` (تراز دوطرفه) | قالب پیش‌فرض با تم بنفش، بج‌های تزئینی عناوین و تراز دوطرفه. |
+| `persian_book` | A4 | `start` (راست‌چین آزاد) | قالب کتاب فنی با شکست صفحه قبل از هر عنوان سطح ۱، سرصفحه/پاصفحهٔ خنثی، و انتهای آزاد برای حداکثر خوانایی متن فارسی. |
+| `persian_compact`| A5 | `start` (راست‌چین آزاد) | قالب کتابچهٔ فشرده با حاشیه‌های کم، مناسب قطع A5. |
+| `persian_report` | Letter | `start` (راست‌چین آزاد) | قالب گزارش سازمانی رسمی با عناوین پیوسته، لوگوی تعبیه‌شده در سربرگ و شماره صفحهٔ پویا در پاورقی. |
 
-جهت ساخت قالب اختصاصی جدید:
+### کلیدهای تنظیمی قالب (`config.yaml`)
+
+- `page.paragraph_align`: تراز متن بدنه؛ مقدار `start` (راست‌چین با انتهای آزاد، جهت رفع کشیدگی‌های نامطلوب کلمات در متن فنی فارسی) یا `both` (تراز دوطرفه).
+- `page.space_after_pt`: فاصلهٔ انتهای هر پاراگراف بر حسب پوینت (پیش‌فرض: `۶.۰`).
+- `caption.size_pt`: اندازهٔ قلم زیرنویس تصاویر و جداول (مثلاً `۱۰.۰`).
+- `custom_styles`: نگاشت نام سبک‌های سفارشی مارک‌داون به نقش‌های کادر. کلید `strict` باید **داخل همین نگاشت** باشد (کلید سطح‌بالای قالب نیست):
+  ```yaml
+  custom_styles:
+    strict: false  # اگر true باشد، سبک‌های ناشناخته باعث خطا می‌شوند
+    "Field Note": note
+    "Security Alert": warning
+  ```
+- بلوک کد در هر چهار قالب با **Courier New** است. پلن چیدمان DejaVu Sans Mono را پیشنهاد کرده بود؛ آن قلم همراه بسته نیست. این یک انتخاب طراحی صریح است تا متن مونواسپیس روی قلمی باشد که معمولاً در Word موجود است.
+
+### فونت‌ها و تصمیم طراحی قلم کد (Typography)
+
+- **متن فارسی (`fonts.body`, `fonts.heading`)**: قلم پیش‌فرض `Vazirmatn` است. هر دو وزن عادی و ضخیم (`Vazirmatn-Regular.ttf`, `Vazirmatn-Bold.ttf`) در پوشهٔ تمام ۴ قالب همراه سند بسته‌بندی شده‌اند.
+- **متن لاتین (`fonts.latin`)**: قلم `Segoe UI` (یا `Vazirmatn`).
+- **بلوک‌های کد و متن یکپارچه (`fonts.code`)**: قلم `Courier New`.
+  > **تصمیم طراحی در مورد فونت کد**: قلم `Courier New` به عنوان فونت پیش‌فرض کد در هر چهار قالب تنظیم شده است. وجود آن در سیستم‌عامل‌های مختلف یک واقعیت محیطی است و تضمین قطعی محسوب نمی‌شود (بررسی وجود آن در محیط نمایش سند توصیه می‌شود). قلم `DejaVu Sans Mono` همراه بسته نیست. در صورت تمایل، کاربر می‌تواند مقدار `fonts.code` را در `config.yaml` قالب دلخواه خود تغییر دهد.
+
+### ساخت قالب اختصاصی جدید
+
 ```bash
-cp -R templates/purple_book templates/my_theme
+cp -R templates/persian_book templates/my_theme
 # ویرایش templates/my_theme/config.yaml
 md2docx templates validate my_theme
 md2docx convert input.md --template my_theme -o out.docx
 ```
+
+---
+
+## ماتریس و آزمون جامع کیفیت چیدمان فارسی
+
+مجموعه آزمون ماتریسی خودکار ۲۴۴ ترکیب (۶۱ فیکسچر استاندارد × ۴ قالب) را با اوراکل‌های ساختاری و محتوایی مستقل اعتبارسنجی می‌کند:
+
+```bash
+python scripts/matrix_runner.py
+# یا اجرای گزینشی:
+python scripts/matrix_runner.py --fixtures S01,S05,S11,B00
+```
+
+گزارش‌های کامل و صادقانه در مسیر `artifacts/persian-layout/run_<timestamp>/` شامل فایل‌های `matrix.csv`, `run.json`, `reviews.json`, `summary.md` و `index.html` ذخیره می‌گردند.
 
 ---
 

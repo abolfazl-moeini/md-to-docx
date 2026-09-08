@@ -1,0 +1,13 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Vazirmatn, Tahoma, sans-serif",
+    "primaryColor": "#E2F1F1",
+    "primaryTextColor": "#17324D",
+    "primaryBorderColor": "#006D77",
+    "lineColor": "#006D77",
+    "secondaryColor": "#D0EBEB",
+    "tertiaryColor": "#F6F8FA"
+  },
+  "flowchart": { "htmlLabels": true, "wrappingWidth": 220, "padding": 12 }
+}

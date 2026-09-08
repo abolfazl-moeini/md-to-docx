@@ -103,7 +103,7 @@ Also supports modern GitHub alerts (`> [!NOTE]`, `> [!WARNING]`), bullet and num
 
 - **Python 3.11+**
 - **[Pandoc](https://pandoc.org) 3.x** (used as AST parser only; it does not write the DOCX)
-- **Node.js 18+** (required for `mermaid-cli`)
+- **Node.js >= 22.12.0** (required for `mermaid-cli`)
 - **Chrome / Chromium** (required for Puppeteer headless rendering)
 
 > [!TIP]
@@ -129,10 +129,10 @@ brew install pandoc
 python3.11 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -c constraints.txt -e ".[dev]"
-npm ci || npm install
+npm ci
 
-# Install Chromium for Puppeteer
-npx puppeteer browsers install chrome
+# Install the managed Puppeteer browser (not system Chrome)
+npx puppeteer browsers install chrome-headless-shell
 ```
 
 Installing the package puts the `md2docx` executable directly on your PATH.
@@ -155,6 +155,9 @@ md2docx convert document.md -o document.docx --template ./templates/my_theme
 # Inspect and validate templates
 md2docx templates list
 md2docx templates validate purple_book
+
+# Convert DOCX back to Markdown and extract media
+md2docx to-md document.docx -o document.md
 ```
 
 ### CLI Exit Codes
@@ -194,26 +197,62 @@ md2docx templates validate purple_book
 
 ## Templates
 
-The default `purple_book` theme is located under `templates/purple_book/`:
+`md-to-docx` includes 4 built-in production templates tailored for different document formats:
 
-```
-templates/purple_book/
-├── config.yaml                 # schema_version: 1, colors, fonts, callouts
-├── mermaid.json                # mermaid-cli theme configuration
-├── mermaid.css                 # Custom font and CSS injection for Mermaid
-├── puppeteer.json              # Headless browser runtime settings
-├── fonts/Vazirmatn-Regular.ttf # SIL OFL font used during diagram rendering
-└── shell.docx                  # Optional base Word document (headers and footers)
-```
+| Template | Page Size | Paragraph Alignment | Description |
+| :--- | :--- | :--- | :--- |
+| `purple_book` | A4 | `both` (justified) | Default theme with purple styling, decorative heading badges, and full justification. |
+| `persian_book` | A4 | `start` (ragged-right) | Technical Persian book layout with page breaks before H1, clean neutral headers/footers, and ragged-right edge for optimal Persian readability. |
+| `persian_compact`| A5 | `start` (ragged-right) | Pocket handbook layout with compact margins and page breaks before H1. |
+| `persian_report` | Letter | `start` (ragged-right) | Formal organizational report with continuous H1 headings, embedded emblem logo header, and dynamic PAGE field footer. |
+
+### Template Configuration Options (`config.yaml`)
+
+- `page.paragraph_align`: Set to `start` (recommended for Persian technical text to prevent awkward justification word-stretching) or `both` (full justification).
+- `page.space_after_pt`: Body paragraph trailing space in points (default: `6.0`).
+- `caption.size_pt`: Font size for figure and table captions (e.g. `10.0`).
+- `custom_styles`: Map custom Pandoc fenced div style names to callout roles. Put `strict` inside this mapping (it is not a top-level template key):
+  ```yaml
+  custom_styles:
+    strict: false  # If true, unmapped custom styles raise ConvertError
+    "Field Note": note
+    "Security Alert": warning
+  ```
+- Code blocks keep **Courier New** in all four templates. DejaVu Sans Mono is not bundled. Whether Courier New is actually installed on a review machine must be checked in that environment.
+
+### Typography & Font Roles
+
+- **Persian Text (`fonts.body`, `fonts.heading`)**: Defaults to `Vazirmatn`. Both regular and bold weights (`Vazirmatn-Regular.ttf`, `Vazirmatn-Bold.ttf`) are bundled in all 4 templates.
+- **Latin Text (`fonts.latin`)**: Configured to `Segoe UI` (or `Vazirmatn`).
+- **Code Blocks & Monospace (`fonts.code`)**: Defaults to `Courier New`.
+  > **Design Decision**: `Courier New` is the configured code font. Presence on a given Word/LibreOffice host is an environment fact, not a guarantee; check the review machine if monospace looks substituted. To use another font, set `fonts.code` in `config.yaml`. DejaVu Sans Mono is not bundled.
 
 ### Creating a Custom Theme
 
 ```bash
-cp -R templates/purple_book templates/my_theme
+cp -R templates/persian_book templates/my_theme
 # Edit templates/my_theme/config.yaml
 md2docx templates validate my_theme
 md2docx convert input.md --template my_theme -o out.docx
 ```
+
+---
+
+## Persian Layout Quality Matrix & Verification
+
+A comprehensive automated matrix suite tests 61 representative fixtures across all 4 templates (244 conversion pairs) with independent structural and content oracles:
+
+```bash
+python scripts/matrix_runner.py
+# Or run for specific fixtures:
+python scripts/matrix_runner.py --fixtures S01,S05,S11,B00
+```
+
+Invalid fixture names, an empty selection, or a non-empty output directory without `--overwrite-run` exit with code 2. Failed/blocked pairs exit with code 1.
+
+Mermaid diagrams need Node `>=22.12.0`, `npm ci`, and a Puppeteer-managed browser (`npx puppeteer browsers install chrome-headless-shell` or `chrome`). System Chrome/Edge are not used unless `MD2DOCX_ALLOW_SYSTEM_BROWSER=1`. After a launch failure the process stops retrying (`MD2DOCX_MERMAID_HEALTH_FILE` can share that lock across workers). Page rendering uses `MD2DOCX_SOFFICE` or `soffice` on PATH; a user cache path is never hardcoded.
+
+Detailed reports are generated under `artifacts/persian-layout/run_<timestamp>/` (`matrix.csv`, `run.json`, `reviews.json`, `summary.md`, and `index.html`). Visual review stays `pending` until LibreOffice/Word page renders are actually produced and reviewed.
 
 ---
 

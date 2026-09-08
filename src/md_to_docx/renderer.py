@@ -21,6 +21,7 @@ from md_to_docx.headings import HeadingInfo
 from md_to_docx.mermaid import ConvertError
 from md_to_docx.bidi import split_bidi_runs, ScriptType, contains_persian, is_pure_latin
 from md_to_docx.oxml import (
+    word_safe_jc,
     set_paragraph_bidi,
     set_paragraph_align,
     set_run_cs_font,
@@ -54,8 +55,30 @@ class DocxRenderer:
         self._width_stack: List[float] = []
         self._footnote_seq = 0
         self._next_bookmark_id = 1
+        self.warnings: List[str] = []
         self.doc = doc if doc is not None else self._init_document()
         self._setup_page()
+
+    def record_warning(
+        self,
+        msg: str,
+        *,
+        code: str = "generic",
+        path: str = "",
+        identity: str = "",
+        severity: str = "warning",
+    ) -> None:
+        """Records a conversion warning with code and source identity (F07)."""
+        ident = (identity or "").strip()
+        loc = (path or "").strip()
+        code_s = (code or "generic").strip()
+        if ident:
+            formatted = f"{code_s}: {msg} @ {ident}"
+        else:
+            formatted = f"{code_s}: {msg}"
+        if loc:
+            formatted += f" at {loc}"
+        self.warnings.append(formatted)
 
     def _init_document(self) -> Document:
         if self.template.shell_docx_path and self.template.shell_docx_path.exists():
@@ -141,7 +164,31 @@ class DocxRenderer:
         if jc is None:
             jc = OxmlElement("w:jc")
             pPr.append(jc)
-        jc.set(qn("w:val"), "both" if self.template.direction != "ltr" else "left")
+        jc.set(qn("w:val"), word_safe_jc(self.paragraph_align, rtl=(self.template.direction != "ltr")))
+
+    @property
+    def paragraph_align(self) -> str:
+        return getattr(self.template, "paragraph_align", "start")
+
+    @property
+    def paragraph_space_after_pt(self) -> float:
+        return getattr(self.template, "paragraph_space_after_pt", 6.0)
+
+    @property
+    def caption_size_pt(self) -> float:
+        return getattr(self.template, "caption_size_pt", 9.5)
+
+    def footnote_size_pt(self) -> float:
+        return float(self.template.page.get("footnote_size_pt", 9.5))
+
+    @contextmanager
+    def font_role(self, role: str):
+        prev = getattr(self, "_font_role", None)
+        self._font_role = role
+        try:
+            yield
+        finally:
+            self._font_role = prev
 
     @property
     def body_font_size_pt(self) -> float:
@@ -218,7 +265,13 @@ class DocxRenderer:
         if text == "":
             return
         resolved_color = self._resolve_color(color_hex or self.template.colors.get("body", "2D2D2D"))
-        cs_font = font_name or self.template.fonts.get("body", "Vazirmatn")
+        role = getattr(self, "_font_role", None)
+        if font_name:
+            cs_font = font_name
+        elif role == "heading":
+            cs_font = self.template.fonts.get("heading", "Vazirmatn")
+        else:
+            cs_font = self.template.fonts.get("body", "Vazirmatn")
         latin_font = self.template.fonts.get("latin", "Segoe UI")
 
         if force_ltr:
@@ -273,23 +326,32 @@ class DocxRenderer:
         return width_emu / 914400.0
 
     def _resolve_color(self, color_name_or_hex: str) -> str:
-        """Resolves color tokens (e.g. 'primary') to hex string without #."""
+        """Resolves color tokens (e.g. 'primary') to 6-digit hex string without #."""
         if not color_name_or_hex:
             return "000000"
-        return self.template.colors.get(color_name_or_hex, color_name_or_hex).lstrip("#")
+        val = str(self.template.colors.get(color_name_or_hex, color_name_or_hex)).strip().lstrip("#")
+        if len(val) == 3:
+            val = "".join(c * 2 for c in val)
+        return val.upper()
 
-    def begin_paragraph(self, sample_text: str = "", align: str = "both") -> Paragraph:
+    def resolve_paragraph_bidi(self, sample_text: str) -> bool:
+        """Content dir/lang override, then template direction (F09)."""
+        content_dir = getattr(self, "content_direction", None) or self.template.direction
+        if content_dir == "ltr":
+            return contains_persian(sample_text)
+        if self.template.direction == "ltr" and content_dir != "rtl":
+            return contains_persian(sample_text)
+        if is_pure_latin(sample_text) and len(sample_text.strip()) > 0:
+            return False
+        return True
+
+    def begin_paragraph(self, sample_text: str = "", align: Optional[str] = None) -> Paragraph:
         p = self.doc.add_paragraph()
-        if self.template.direction == "ltr":
-            set_paragraph_bidi(p, bidi=contains_persian(sample_text))
-        else:
-            if is_pure_latin(sample_text) and len(sample_text.strip()) > 0:
-                set_paragraph_bidi(p, bidi=False)
-            else:
-                set_paragraph_bidi(p, bidi=True)
-        set_paragraph_align(p, align)
+        set_paragraph_bidi(p, bidi=self.resolve_paragraph_bidi(sample_text))
+        eff_align = align if align is not None else self.paragraph_align
+        set_paragraph_align(p, eff_align)
         p.paragraph_format.line_spacing = self._line_spacing()
-        p.paragraph_format.space_after = Pt(6)
+        p.paragraph_format.space_after = Pt(self.paragraph_space_after_pt)
         return p
 
     def begin_quote_paragraph(self, sample_text: str = "") -> Paragraph:
@@ -297,7 +359,7 @@ class DocxRenderer:
         border_color = self._resolve_color(quote_cfg.get("border_color", "primary"))
         quote_bg = self._resolve_color(quote_cfg.get("bg", "quote_bg"))
         border_sz = self.quote_border_sz()
-        p = self.begin_paragraph(sample_text, align="both")
+        p = self.begin_paragraph(sample_text, align=self.paragraph_align)
         border_side = self.quote_border_side()
         set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15, side=border_side)
         set_paragraph_shading(p, quote_bg)
@@ -306,7 +368,7 @@ class DocxRenderer:
     def render_paragraph(
         self,
         text: str,
-        align: str = "both",
+        align: Optional[str] = None,
         font_size_pt: Optional[float] = None,
         bold: bool = False,
         italic: bool = False,
@@ -318,30 +380,25 @@ class DocxRenderer:
         size = self.body_font_size_pt if font_size_pt is None else font_size_pt
         if bidi is not None:
             set_paragraph_bidi(p, bidi=bidi)
-        elif self.template.direction == "ltr":
-            set_paragraph_bidi(p, bidi=contains_persian(text))
         else:
-            if is_pure_latin(text) and len(text.strip()) > 0:
-                set_paragraph_bidi(p, bidi=False)
-            else:
-                set_paragraph_bidi(p, bidi=True)
+            set_paragraph_bidi(p, bidi=self.resolve_paragraph_bidi(text))
 
-        set_paragraph_align(p, align)
-
-        self.append_text(
-            p,
-            text,
-            font_size_pt=size,
-            bold=bold,
-            italic=italic,
-            color_hex=color_hex or self.template.colors.get("body", "2D2D2D"),
-        )
-
+        eff_align = align if align is not None else self.paragraph_align
+        set_paragraph_align(p, eff_align)
+        self.append_text(p, text, font_size_pt=size, bold=bold, italic=italic, color_hex=color_hex)
         p.paragraph_format.line_spacing = self._line_spacing()
-        p.paragraph_format.space_after = Pt(6)
+        p.paragraph_format.space_after = Pt(self.paragraph_space_after_pt)
         return p
 
-    def render_heading(self, info: HeadingInfo) -> Any:
+    def _set_heading_outline(self, p: Paragraph, level: int) -> None:
+        pPr = p._p.get_or_add_pPr()
+        outline = pPr.find(qn("w:outlineLvl"))
+        if outline is None:
+            outline = OxmlElement("w:outlineLvl")
+            pPr.append(outline)
+        outline.set(qn("w:val"), str(max(0, min(level - 1, 8))))
+
+    def render_heading(self, info: HeadingInfo, title_inlines: Optional[List[Dict[str, Any]]] = None) -> Any:
         heading_config = self.template.headings.get(f"h{info.level}", {})
         font_size = heading_config.get("size_pt", 14 if info.level == 2 else (16 if info.level == 1 else 13))
         heading_font = self.template.fonts.get("heading", "Vazirmatn")
@@ -349,22 +406,34 @@ class DocxRenderer:
         on_primary = self._resolve_color(heading_config.get("badge_fg", "on_primary"))
         primary_color = self._resolve_color("primary")
 
+        page_break_before = bool(heading_config.get("page_break_before", False))
+
         # Numbered heading with badge
         if info.number and self.template.headings.get("badge", True):
+            if page_break_before and (len(self.doc.paragraphs) > 0 or len(self.doc.tables) > 0):
+                self.doc.add_page_break()
             tbl = self.doc.add_table(rows=1, cols=2)
             tbl.autofit = False
-            is_rtl_heading = self.template.direction == "rtl" and (
-                contains_persian(info.title) or contains_persian(info.number)
-            )
+            _h_desc = tbl._tbl.tblPr.find(qn("w:tblDescription"))
+            if _h_desc is None:
+                _h_desc = OxmlElement("w:tblDescription")
+                tbl._tbl.tblPr.append(_h_desc)
+            _h_desc.set(qn("w:val"), "heading_badge")
+            is_rtl_heading = self.resolve_paragraph_bidi(info.title or info.number)
             if is_rtl_heading:
                 set_table_bidi_visual(tbl)
 
             nchars = max(len(info.number), 1)
-            badge_dxa = int(font_size * 20 * 0.72 * nchars) + 280
-            badge_dxa = max(1200, min(badge_dxa, 3200))
+            badge_dxa = int(font_size * 20 * 0.72 * nchars) + 360
+            badge_dxa = max(1200, min(badge_dxa, 4000))
             total_dxa = int(round(self.available_width_in * 1440))
             title_dxa = max(720, total_dxa - badge_dxa)
             set_table_column_widths(tbl, [badge_dxa, title_dxa])
+
+            # Ensure heading row never splits across pages
+            r_trPr = tbl.rows[0]._tr.get_or_add_trPr()
+            if r_trPr.find(qn("w:cantSplit")) is None:
+                r_trPr.append(OxmlElement("w:cantSplit"))
 
             cell0: _Cell = tbl.cell(0, 0)
             set_cell_shading(cell0, badge_bg)
@@ -399,16 +468,23 @@ class DocxRenderer:
             set_paragraph_bidi(p1, bidi=is_rtl_heading)
             set_paragraph_align(p1, "start")
             set_paragraph_keep(p1, keep_next=True, keep_lines=True)
+            self._set_heading_outline(p1, info.level)
 
             title_color = self._resolve_color(self.template.colors.get("body", "2D2D2D"))
-            self.append_text(
-                p1,
-                info.title,
-                font_size_pt=font_size,
-                bold=True,
-                color_hex=title_color,
-                font_name=heading_font,
-            )
+            heading_bold = bool((self.template.headings or {}).get(f"h{info.level}", {}).get("bold", True))
+            if title_inlines:
+                from md_to_docx.pandoc_json import emit_inlines
+                with self.font_role("heading"):
+                    emit_inlines(title_inlines, self, p1, font_size_pt=font_size, bold=heading_bold, color_hex=title_color)
+            else:
+                self.append_text(
+                    p1,
+                    info.title,
+                    font_size_pt=font_size,
+                    bold=heading_bold,
+                    color_hex=title_color,
+                    font_name=heading_font,
+                )
 
             # Spacing after heading table
             after_p = self.doc.add_paragraph()
@@ -420,19 +496,28 @@ class DocxRenderer:
 
         # Heading without number
         p = self.doc.add_paragraph()
-        is_rtl = contains_persian(info.title) if self.template.direction == "rtl" else False
+        if page_break_before:
+            p.paragraph_format.page_break_before = True
+        is_rtl = self.resolve_paragraph_bidi(info.title)
         set_paragraph_bidi(p, bidi=is_rtl)
         set_paragraph_align(p, "start")
         set_paragraph_bottom_border(p, color_hex=primary_color)
+        self._set_heading_outline(p, info.level)
         title_color = self._resolve_color(self.template.colors.get("body", "2D2D2D"))
-        self.append_text(
-            p,
-            info.title,
-            font_size_pt=font_size,
-            bold=True,
-            color_hex=title_color,
-            font_name=heading_font,
-        )
+        heading_bold = bool((self.template.headings or {}).get(f"h{info.level}", {}).get("bold", True))
+        if title_inlines:
+            from md_to_docx.pandoc_json import emit_inlines
+            with self.font_role("heading"):
+                emit_inlines(title_inlines, self, p, font_size_pt=font_size, bold=heading_bold, color_hex=title_color)
+        else:
+            self.append_text(
+                p,
+                info.title,
+                font_size_pt=font_size,
+                bold=heading_bold,
+                color_hex=title_color,
+                font_name=heading_font,
+            )
         p.paragraph_format.space_before = Pt(12)
         p.paragraph_format.space_after = Pt(6)
         set_paragraph_keep(p, keep_next=True, keep_lines=True)
@@ -452,45 +537,96 @@ class DocxRenderer:
         body_bg = self._resolve_color(spec.get("body_bg", "F7F3FB"))
         icon = spec.get("icon", "")
 
-        display_title = f"{icon} {title}".strip() if icon else title
+        has_title = bool(title and title.strip())
+        display_title = f"{icon} {title}".strip() if icon else (title.strip() if title else "")
 
         target = container if container is not None else self.doc
-        tbl = target.add_table(rows=2, cols=1)
-        tbl.autofit = False
-        is_rtl_callout = self.template.direction == "rtl" and (
-            contains_persian(title) or any(contains_persian(str(b)) for b in body_items)
-        )
-        if is_rtl_callout:
-            set_table_bidi_visual(tbl)
-
-        # Header Row
-        cell_hdr: _Cell = tbl.cell(0, 0)
         callout_width = self.available_width_in
-        cell_hdr.width = Inches(callout_width)
-        set_cell_shading(cell_hdr, hdr_bg)
-        set_cell_margins(cell_hdr, top_pt=5, bottom_pt=5, left_pt=8, right_pt=8)
-        set_cell_borders(cell_hdr, top=None, bottom=None, left=None, right=None)
 
-        p_hdr = cell_hdr.paragraphs[0]
-        self._clear_paragraph(p_hdr)
-        set_paragraph_bidi(p_hdr, bidi=is_rtl_callout)
-        set_paragraph_align(p_hdr, "start")
-        self.append_text(
-            p_hdr,
-            display_title,
-            font_size_pt=11.0,
-            bold=True,
-            color_hex=hdr_fg,
-            font_name=self.template.fonts.get("heading", "Vazirmatn"),
-        )
+        # Table direction follows the combined title+body content so a Persian
+        # callout in an LTR template still lays out RTL (FINAL-10).
+        try:
+            from md_to_docx.pandoc_json import blocks_to_text as _blocks_to_text
 
-        # Body Row
-        cell_body: _Cell = tbl.cell(1, 0)
-        cell_body.width = Inches(callout_width)
-        set_cell_shading(cell_body, body_bg)
-        set_cell_margins(cell_body, top_pt=6, bottom_pt=6, left_pt=8, right_pt=8)
-        subtle_border = {"val": "single", "sz": 4, "color": "E0D9EB", "space": 0}
-        set_cell_borders(cell_body, top=None, bottom=subtle_border, left=subtle_border, right=subtle_border)
+            _body_sample = " ".join(
+                _blocks_to_text([b]) for b in body_items if isinstance(b, dict)
+            )
+        except Exception:
+            _body_sample = ""
+        is_rtl_callout = self.resolve_paragraph_bidi(f"{title} {_body_sample}")
+
+        border_col = self._resolve_color(spec.get("border_color", "E0D9EB"))
+        border_sz = int(spec.get("border_sz", 4))
+        subtle_border = {"val": "single", "sz": border_sz, "color": border_col, "space": 0}
+
+        callout_dxa = int(round(callout_width * 1440))
+
+        if has_title:
+            tbl = target.add_table(rows=2, cols=1)
+            tbl.autofit = False
+            _c_desc = tbl._tbl.tblPr.find(qn("w:tblDescription"))
+            if _c_desc is None:
+                _c_desc = OxmlElement("w:tblDescription")
+                tbl._tbl.tblPr.append(_c_desc)
+            _c_desc.set(qn("w:val"), "callout")
+            if is_rtl_callout:
+                set_table_bidi_visual(tbl)
+            set_table_column_widths(tbl, [callout_dxa])
+
+            # Header Row
+            cell_hdr: _Cell = tbl.cell(0, 0)
+            cell_hdr.width = Inches(callout_width)
+            set_cell_shading(cell_hdr, hdr_bg)
+            set_cell_margins(cell_hdr, top_pt=5, bottom_pt=5, left_pt=8, right_pt=8)
+            set_cell_borders(cell_hdr, top=None, bottom=None, left=None, right=None)
+
+            p_hdr = cell_hdr.paragraphs[0]
+            self._clear_paragraph(p_hdr)
+            set_paragraph_bidi(p_hdr, bidi=self.resolve_paragraph_bidi(display_title))
+            set_paragraph_align(p_hdr, "start")
+            # Keep header row together with body on page breaks (E04)
+            set_paragraph_keep(p_hdr, keep_next=True, keep_lines=True)
+            hdr_trPr = tbl.rows[0]._tr.get_or_add_trPr()
+            if hdr_trPr.find(qn("w:cantSplit")) is None:
+                hdr_trPr.append(OxmlElement("w:cantSplit"))
+            self.append_text(
+                p_hdr,
+                display_title,
+                font_size_pt=11.0,
+                bold=True,
+                color_hex=hdr_fg,
+                font_name=self.template.fonts.get("heading", "Vazirmatn"),
+            )
+
+            # Body Row
+            cell_body: _Cell = tbl.cell(1, 0)
+            cell_body.width = Inches(callout_width)
+            set_cell_shading(cell_body, body_bg)
+            set_cell_margins(cell_body, top_pt=6, bottom_pt=6, left_pt=8, right_pt=8)
+            set_cell_borders(cell_body, top=None, bottom=subtle_border, left=subtle_border, right=subtle_border)
+        else:
+            # Single-row callout without orphanable header row (E04/E06/Section 3.3)
+            tbl = target.add_table(rows=1, cols=1)
+            tbl.autofit = False
+            _c_desc = tbl._tbl.tblPr.find(qn("w:tblDescription"))
+            if _c_desc is None:
+                _c_desc = OxmlElement("w:tblDescription")
+                tbl._tbl.tblPr.append(_c_desc)
+            _c_desc.set(qn("w:val"), "callout")
+            if is_rtl_callout:
+                set_table_bidi_visual(tbl)
+            set_table_column_widths(tbl, [callout_dxa])
+
+            cell_body: _Cell = tbl.cell(0, 0)
+            cell_body.width = Inches(callout_width)
+            set_cell_shading(cell_body, body_bg)
+            set_cell_margins(cell_body, top_pt=6, bottom_pt=6, left_pt=8, right_pt=8)
+            accent_col = self._resolve_color(spec.get("header_bg", border_col))
+            accent_border = {"val": "single", "sz": max(border_sz, 8), "color": accent_col, "space": 0}
+            if self.template.direction == "rtl":
+                set_cell_borders(cell_body, top=subtle_border, bottom=subtle_border, left=subtle_border, right=accent_border)
+            else:
+                set_cell_borders(cell_body, top=subtle_border, bottom=subtle_border, left=accent_border, right=subtle_border)
 
         p_first = cell_body.paragraphs[0]
         rendered_count = 0
@@ -498,7 +634,7 @@ class DocxRenderer:
             if isinstance(item, str):
                 target_p = p_first if rendered_count == 0 else cell_body.add_paragraph()
                 self._clear_paragraph(target_p)
-                self.render_paragraph(item, align="both", font_size_pt=10.5, target_p=target_p)
+                self.render_paragraph(item, align=self.paragraph_align, font_size_pt=10.5, target_p=target_p)
                 rendered_count += 1
             elif isinstance(item, dict) and block_renderer:
                 # If first block is a Table or CodeBlock, python-docx adds the table after p_first.
@@ -518,7 +654,7 @@ class DocxRenderer:
             else:
                 target_p = p_first if rendered_count == 0 else cell_body.add_paragraph()
                 self._clear_paragraph(target_p)
-                self.render_paragraph(str(item), align="both", font_size_pt=10.5, target_p=target_p)
+                self.render_paragraph(str(item), align=self.paragraph_align, font_size_pt=10.5, target_p=target_p)
                 rendered_count += 1
 
         # Trailing spacing
@@ -542,10 +678,10 @@ class DocxRenderer:
             p = target.add_paragraph()
             is_rtl = self.template.direction == "rtl" and (contains_persian(text) or not is_pure_latin(text))
             set_paragraph_bidi(p, bidi=is_rtl)
-            set_paragraph_align(p, "both")
+            set_paragraph_align(p, self.paragraph_align)
             set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15, side=border_side)
             set_paragraph_shading(p, quote_bg)
-            self.render_paragraph(text, align="both", font_size_pt=10.5, target_p=p)
+            self.render_paragraph(text, align=self.paragraph_align, font_size_pt=10.5, target_p=p)
             rendered.append(p)
 
         return rendered
@@ -580,7 +716,7 @@ class DocxRenderer:
                 p_def = self.doc.add_paragraph()
                 is_rtl_d = contains_persian(dtext) if self.template.direction == "rtl" else False
                 set_paragraph_bidi(p_def, bidi=is_rtl_d)
-                set_paragraph_align(p_def, "both")
+                set_paragraph_align(p_def, self.paragraph_align)
                 if is_rtl_d:
                     p_def.paragraph_format.right_indent = Inches(0.3)
                 else:
@@ -601,6 +737,21 @@ class DocxRenderer:
     def render_page_break(self) -> None:
         """Renders an explicit page break (F-12)."""
         self.doc.add_page_break()
+
+    def insert_toc_field(self) -> None:
+        """Insert a native Word TOC field. Page numbers require a Word field update (F16)."""
+        p = self.doc.add_paragraph()
+        set_paragraph_bidi(p, bidi=self.template.direction != "ltr")
+        set_paragraph_align(p, "start")
+        fld = OxmlElement("w:fldSimple")
+        fld.set(qn("w:instr"), ' TOC \\o "1-3" \\h \\z \\u ')
+        r = OxmlElement("w:r")
+        t = OxmlElement("w:t")
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        t.text = "جدول محتوا — فیلد را در Word به‌روز کنید"
+        r.append(t)
+        fld.append(r)
+        p._p.append(fld)
 
     def bookmark_name(self, name: str) -> str:
         """Return a Word-safe, deterministic bookmark name for a Pandoc identifier."""
@@ -637,35 +788,57 @@ class DocxRenderer:
     def add_omml(self, paragraph: Paragraph, tex: str, display: bool = False) -> None:
         from lxml import etree
         from md_to_docx.omml import tex_to_omml_xml
-        # A display equation is block-level OOXML and must not be appended inside
-        # w:p. render_display_omml() handles the normal block case; retain a valid
-        # inline fallback for unusual nested AST shapes.
-        xml = tex_to_omml_xml(tex, display=False)
+        # Inline Math -> m:oMath; DisplayMath in an inline-capable host (heading,
+        # footnote, cell) -> m:oMathPara inside the same w:p, which is valid per
+        # Word OMML (FINAL-01). Block-level display uses render_display_omml().
+        xml = tex_to_omml_xml(tex, display=display)
         el = etree.fromstring(xml.encode("utf-8"))
         paragraph._p.append(el)
 
     def render_display_omml(self, tex: str, container: Optional[Any] = None) -> None:
-        """Insert an m:oMathPara directly into the document or table-cell body."""
+        """Insert an m:oMathPara inside a Word paragraph (w:p) per Word OMML specification."""
         from lxml import etree
         from md_to_docx.omml import tex_to_omml_xml
 
         target = container if container is not None else self.doc
-        placeholder = target.add_paragraph()
+        p = target.add_paragraph()
+        p.paragraph_format.space_before = Pt(6)
+        p.paragraph_format.space_after = Pt(6)
+        set_paragraph_align(p, "center")
         math_para = etree.fromstring(tex_to_omml_xml(tex, display=True).encode("utf-8"))
-        placeholder._p.addnext(math_para)
-        placeholder._p.getparent().remove(placeholder._p)
+        p._p.append(math_para)
 
     def add_footnote(self, paragraph: Paragraph, note_blocks: List[Any]) -> None:
-        from md_to_docx.footnotes import add_footnote_body, add_footnote_reference, _ensure_footnotes_part, next_footnote_id
-        from md_to_docx.pandoc_json import blocks_to_text
+        from md_to_docx.footnotes import (
+            add_footnote_reference,
+            _ensure_footnotes_part,
+            next_footnote_id,
+            FootnoteContainer,
+            ET_to_bytes,
+        )
+        from md_to_docx.pandoc_json import render_block, emit_inlines
 
         part = _ensure_footnotes_part(self.doc)
         fid = next_footnote_id(part)
         add_footnote_reference(paragraph, fid)
-        fn_p, root, part = add_footnote_body(self.doc, fid)
-        text = blocks_to_text(note_blocks) if note_blocks else ""
-        self.append_text(fn_p, " " + text, font_size_pt=9.5)
-        from md_to_docx.footnotes import ET_to_bytes
+        container, root = FootnoteContainer.create(self.doc, part, fid)
+
+        prev_size = getattr(self, "_content_font_size_pt", None)
+        self._content_font_size_pt = self.footnote_size_pt()
+        try:
+            if note_blocks:
+                first_block = note_blocks[0]
+                if first_block.get("t") in ("Para", "Plain"):
+                    p0 = container.first_paragraph
+                    emit_inlines(first_block.get("c", []), self, p0, font_size_pt=self.footnote_size_pt())
+                    for blk in note_blocks[1:]:
+                        render_block(blk, self, container=container)
+                else:
+                    for blk in note_blocks:
+                        render_block(blk, self, container=container)
+        finally:
+            self._content_font_size_pt = prev_size
+
         part._blob = ET_to_bytes(root)
 
     def render_table(
@@ -685,6 +858,11 @@ class DocxRenderer:
         target = container if container is not None else self.doc
         tbl = target.add_table(rows=num_rows, cols=num_cols)
         tbl.autofit = False
+        _dt_desc = tbl._tbl.tblPr.find(qn("w:tblDescription"))
+        if _dt_desc is None:
+            _dt_desc = OxmlElement("w:tblDescription")
+            tbl._tbl.tblPr.append(_dt_desc)
+        _dt_desc.set(qn("w:val"), "data_table")
 
         # Determine table direction
         has_persian = any(contains_persian(h) for h in headers) or any(
@@ -781,7 +959,7 @@ class DocxRenderer:
             self.append_text(
                 p_cap,
                 caption,
-                font_size_pt=9.5,
+                font_size_pt=self.caption_size_pt,
                 italic=True,
                 color_hex=self.template.colors.get("caption", "5A5A5A"),
             )
@@ -812,18 +990,19 @@ class DocxRenderer:
             disp_h = disp_w * aspect
         elif height_in and height_in > 0:
             disp_h = min(height_in, max_h)
-            disp_w = disp_h / max(aspect, 0.01)
+            disp_w = disp_h / aspect
         else:
             native_w = px_w / 96.0
             disp_w = min(native_w, max_w)
             disp_h = disp_w * aspect
         if disp_h > max_h:
             disp_h = max_h
-            disp_w = disp_h / max(aspect, 0.01)
+            disp_w = disp_h / aspect
         if disp_w > max_w:
             disp_w = max_w
             disp_h = disp_w * aspect
-        return max(disp_w, 0.2), max(disp_h, 0.2)
+        # Do not clamp width and height independently — that distorts extreme aspect ratios (F11).
+        return disp_w, disp_h
 
     def render_image(
         self,
@@ -886,18 +1065,22 @@ class DocxRenderer:
             self.append_text(
                 p_cap,
                 caption,
-                font_size_pt=9.5,
+                font_size_pt=self.caption_size_pt,
                 bold=False,
                 italic=False,
                 color_hex=cap_color,
                 font_name=self.template.fonts.get("body", "Vazirmatn"),
             )
 
-        if alt_text:
-            for docPr in p_img._p.xpath(".//wp:docPr"):
-                docPr.set("descr", alt_text)
-                if not docPr.get("title"):
-                    docPr.set("title", alt_text)
+        for docPr in p_img._p.xpath(".//wp:docPr"):
+            if is_mermaid:
+                docPr.set("name", "Mermaid Diagram")
+                docPr.set("descr", alt_text or "mermaid")
+            else:
+                if not docPr.get("descr"):
+                    docPr.set("descr", alt_text or "image")
+            if alt_text and not docPr.get("title"):
+                docPr.set("title", alt_text)
 
         return (p_img, p_cap)
 
@@ -1011,6 +1194,11 @@ class DocxRenderer:
         tbl = target.add_table(rows=1, cols=1)
         tbl.autofit = False
         tblPr = tbl._tbl.tblPr
+        _cb_desc = tblPr.find(qn("w:tblDescription"))
+        if _cb_desc is None:
+            _cb_desc = OxmlElement("w:tblDescription")
+            tblPr.append(_cb_desc)
+        _cb_desc.set(qn("w:val"), "code_block")
 
         # Ensure NO bidiVisual on code blocks
         existing_bidi = tblPr.find(qn("w:bidiVisual"))
@@ -1047,25 +1235,27 @@ class DocxRenderer:
         border_spec = {"val": "single", "sz": border_sz, "color": border_color, "space": 0}
         set_cell_borders(cell, top=border_spec, bottom=border_spec, left=border_spec, right=border_spec)
 
-        # Normalize line endings. Drop a single trailing newline (fence closer) but
-        # keep leading, internal, and extra trailing blank lines (FIN-09).
+        # Normalize line endings without stripping AST content (FINAL-03)
         norm_code = code_str.replace("\r\n", "\n").replace("\r", "\n")
-        if norm_code.endswith("\n"):
-            norm_code = norm_code[:-1]
 
-        # Split on source newlines first so blank lines survive Pygments (FIN-09)
-        physical_lines = norm_code.split("\n")
-        lines: List[List[Tuple[Any, str]]] = []
-        for line in physical_lines:
-            line_tokens: List[Tuple[Any, str]] = []
-            for token_type, text in lexer.get_tokens(line):
-                if text.endswith("\n"):
-                    text = text[:-1]
-                if text:
-                    line_tokens.append((token_type, text))
-            lines.append(line_tokens)
-        if not lines:
-            lines = [[]]
+        # Tokenize the entire block at once so multiline tokens (strings, comments)
+        # retain proper syntax highlighting state across lines (FINAL-03)
+        def tokenize(active_lexer) -> List[List[Tuple[Any, str]]]:
+            built: List[List[Tuple[Any, str]]] = [[]]
+            for token_type, text in active_lexer.get_tokens(norm_code):
+                parts = text.split("\n")
+                for i, part in enumerate(parts):
+                    if i > 0:
+                        built.append([])
+                    if part:
+                        built[-1].append((token_type, part))
+            return built or [[]]
+
+        lines = tokenize(lexer)
+        reconstructed = "\n".join("".join(val for _tt, val in line) for line in lines)
+        if reconstructed.rstrip("\n") != norm_code.rstrip("\n"):
+            # Some lexers (notably console) drop lines; exact source text wins (F10).
+            lines = tokenize(TextLexer(**lexer_opts))
 
         p_first = cell.paragraphs[0]
         for idx, line_tokens in enumerate(lines):

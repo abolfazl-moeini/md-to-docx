@@ -211,9 +211,8 @@ def test_template_load_prefers_project_templates_over_package(tmp_path, monkeypa
         (override / rel).write_text((PROJECT_ROOT / "templates" / "purple_book" / rel).read_text(encoding="utf-8"), encoding="utf-8")
     fonts = override / "fonts"
     fonts.mkdir()
-    (fonts / "Vazirmatn-Regular.ttf").write_bytes(
-        (PROJECT_ROOT / "templates" / "purple_book" / "fonts" / "Vazirmatn-Regular.ttf").read_bytes()
-    )
+    for font_file in (PROJECT_ROOT / "templates" / "purple_book" / "fonts").glob("*.ttf"):
+        (fonts / font_file.name).write_bytes(font_file.read_bytes())
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(tmpl_mod, "PROJECT_ROOT", tmp_path)

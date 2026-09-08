@@ -45,6 +45,10 @@ TOKEN_RE = re.compile(
     r"(?P<paren_latin>\([ \t]*[a-zA-Z0-9_\.\-\/]+(?:[ \t]+[a-zA-Z0-9_\.\-\/]+)*[ \t]*\))"
     # URLs
     r"|(?P<url>https?://[^\s\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+)"
+    # Windows paths like D:\SQLData\master.mdf
+    r"|(?P<winpath>[A-Za-z]:\\[^\s\u0600-\u06FF]*)"
+    # Domain\user or Instance\Name
+    r"|(?P<domuser>[A-Za-z0-9][A-Za-z0-9._-]*\\[A-Za-z0-9._-]+)"
     # POSIX / file paths
     r"|(?P<path>/(?:[a-zA-Z0-9_\.\-]+/)+[a-zA-Z0-9_\.\-]*)"
     # Latin words, identifiers with _ or -, versions like v1.2.3, domain names
@@ -73,6 +77,10 @@ def split_bidi_runs(text: str) -> List[Tuple[str, ScriptType]]:
             tokens.append((m.group("paren_latin"), ScriptType.LATIN))
         elif m.group("url"):
             tokens.append((m.group("url"), ScriptType.LATIN))
+        elif m.group("winpath"):
+            tokens.append((m.group("winpath"), ScriptType.LATIN))
+        elif m.group("domuser"):
+            tokens.append((m.group("domuser"), ScriptType.LATIN))
         elif m.group("path"):
             tokens.append((m.group("path"), ScriptType.LATIN))
         elif m.group("latin"):

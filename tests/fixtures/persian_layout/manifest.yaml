@@ -1,0 +1,1217 @@
+version: 1
+total_fixtures: 61
+source_book_sha256: 525a3e92016a946bf36fdd5b3a2a8c8829a6e71e3e433fe52b6d9e9f3352443b
+fixtures:
+- id: B00
+  category: source
+  rel_path: source/B00.md
+  sha256: 525a3e92016a946bf36fdd5b3a2a8c8829a6e71e3e433fe52b6d9e9f3352443b
+  title: کتاب کامل مدیریت پایگاه داده SQL Server (فصل‌های ۱ تا ۴)
+  source_range: 1-3335
+  wrapper: false
+  counts:
+    headings: 189
+    code_blocks: 115
+    tables: 23
+    images: 0
+    mermaid_blocks: 0
+    callouts: 46
+    custom_styles: 46
+  sensitive_strings:
+  - SQLPROD01\REPORTING
+  - D:\SQLData
+  - Buffer Pool
+  - VMware ESXi
+  - Query Processor
+  expected_warnings:
+  - caption_without_image @ شکل ۱-۱
+  - caption_without_image @ شکل ۱-۲
+  - caption_without_image @ شکل ۱-۳
+  - caption_without_image @ شکل ۲-۱
+  - caption_without_image @ شکل ۲-۲
+- id: C01
+  category: chapters
+  rel_path: chapters/C01.md
+  sha256: c2c8d534a61975ea31b46df9639456f7c46c7e238661d18ada31639cbb3e0236
+  title: فصل اول — آشنایی با SQL Server و معماری پایه
+  source_range: 7-368
+  wrapper: true
+  counts:
+    headings: 41
+    code_blocks: 4
+    tables: 8
+    images: 0
+    mermaid_blocks: 0
+    callouts: 14
+    custom_styles: 14
+  sensitive_strings:
+  - SQLPROD01\REPORTING
+  - Buffer Pool
+  - Query Processor
+  - SQL Server Database Engine
+  - شکل ۱-۱
+  expected_warnings:
+  - caption_without_image @ شکل ۱-۱
+  - caption_without_image @ شکل ۱-۲
+  - caption_without_image @ شکل ۱-۳
+- id: C02
+  category: chapters
+  rel_path: chapters/C02.md
+  sha256: 3f638e4eaba45e908008dcf23b238573e421d386a611780831ae47f707c5f222
+  title: فصل دوم — آماده‌سازی ماشین مجازی و زیرساخت برای SQL Server
+  source_range: 369-562
+  wrapper: true
+  counts:
+    headings: 17
+    code_blocks: 0
+    tables: 3
+    images: 0
+    mermaid_blocks: 0
+    callouts: 10
+    custom_styles: 10
+  sensitive_strings:
+  - D:\SQLData
+  - Buffer Pool
+  - VMware ESXi
+  - SQL Server
+  expected_warnings:
+  - caption_without_image @ شکل ۲-۱
+  - caption_without_image @ شکل ۲-۲
+- id: C03
+  category: chapters
+  rel_path: chapters/C03.md
+  sha256: 6a06fdec1c2a399784d3d5fb323cca4e3692e45b8044618ea75d3abe85b12181
+  title: فصل سوم — نصب و پیکربندی اولیه SQL Server از دید DBA
+  source_range: 563-2289
+  wrapper: true
+  counts:
+    headings: 76
+    code_blocks: 73
+    tables: 8
+    images: 0
+    mermaid_blocks: 0
+    callouts: 16
+    custom_styles: 16
+  sensitive_strings:
+  - Buffer Pool
+  - VMware ESXi
+  - SQL Server Database Engine
+  - MAXDOP
+  - Collation
+  expected_warnings: []
+- id: C04
+  category: chapters
+  rel_path: chapters/C04.md
+  sha256: abf5b60ec12759cb2ae6e281a23aa1f1414e11bd4afe5e1009eb458c1f0f4455
+  title: فصل چهارم — مدیریت Database، فایل‌ها و رشد
+  source_range: 2290-3335
+  wrapper: true
+  counts:
+    headings: 55
+    code_blocks: 38
+    tables: 4
+    images: 0
+    mermaid_blocks: 0
+    callouts: 6
+    custom_styles: 6
+  sensitive_strings:
+  - D:\SQLData
+  - Collation
+  - sys.databases
+  - SQL Server
+  expected_warnings: []
+- id: R01
+  category: extracted
+  rel_path: extracted/R01.md
+  sha256: b13c5736dc0a05659ef2b27aace3042b0d6cb07c2fde3f8b3efb3c4bd4c1b96a
+  title: 'برش R01: تعریف SQL Server، متن مخلوط، SQL کوتاه و دو سبک یادداشت'
+  source_range: 15-42
+  wrapper: true
+  counts:
+    headings: 2
+    code_blocks: 1
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 2
+    custom_styles: 2
+  sensitive_strings:
+  - Query Processor
+  - SQL Server
+  expected_warnings: []
+- id: R02
+  category: extracted
+  rel_path: extracted/R02.md
+  sha256: cc6a981f84df000b64202fbd2cf9eeac3bc11aa218c3886ce864f49c3ad9fb70
+  title: 'برش R02: مرزهای Instance/Database، مسیر بک‌اسلش و جدول سه‌ستونی'
+  source_range: 73-100
+  wrapper: true
+  counts:
+    headings: 3
+    code_blocks: 0
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 2
+    custom_styles: 2
+  sensitive_strings:
+  - SQLPROD01\REPORTING
+  - SQL Server
+  expected_warnings: []
+- id: R03
+  category: extracted
+  rel_path: extracted/R03.md
+  sha256: cc83ba7df1a75068a7738f09b6d2bb5cbd2c2d8012200ca6e3cecac43257d691
+  title: 'برش R03: نقش مؤلفه‌ها، دو زیرنویس بدون تصویر و DBA Note'
+  source_range: 101-128
+  wrapper: true
+  counts:
+    headings: 4
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - Buffer Pool
+  - Query Processor
+  - SQL Server Database Engine
+  - شکل ۱-۱
+  - شکل ۱-۲
+  expected_warnings:
+  - caption_without_image @ شکل ۱-۱
+  - caption_without_image @ شکل ۱-۲
+- id: R04
+  category: extracted
+  rel_path: extracted/R04.md
+  sha256: 2425306fb45bdb9802f9aafcff3f50edfda38bcf386645cf0e961d8090113647
+  title: 'برش R04: پایگاه‌های سیستمی، سلول پرمتن و هشدار'
+  source_range: 129-152
+  wrapper: true
+  counts:
+    headings: 3
+    code_blocks: 0
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - شکل ۱-۱
+  - SQL Server
+  expected_warnings: []
+- id: R05
+  category: extracted
+  rel_path: extracted/R05.md
+  sha256: 063c52d1d61fe7e6221822b3e5f5ee4d13bc615e412cb88717ad963c16ce67a9
+  title: 'برش R05: Login/User و نام‌های فنی مخلوط'
+  source_range: 153-174
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 2
+    custom_styles: 2
+  sensitive_strings:
+  - Junior
+  - Instance
+  expected_warnings: []
+- id: R06
+  category: extracted
+  rel_path: extracted/R06.md
+  sha256: b8d06889a6bf57cba9938f580597b89959b2ddf4bb94f36a3296a6c2b493dcd8
+  title: 'برش R06: Edition و Lab Note؛ حفظ تفاوت نقش‌ها'
+  source_range: 175-197
+  wrapper: true
+  counts:
+    headings: 2
+    code_blocks: 0
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - Buffer Pool
+  - SQL Server
+  expected_warnings: []
+- id: R07
+  category: extracted
+  rel_path: extracted/R07.md
+  sha256: 398c4a5b2b1c7b30340b5585559180520139f0503f35a48c52ddd9c1bd2d2c65
+  title: 'برش R07: Storage، Data/Log و مسیرهای فنی'
+  source_range: 218-249
+  wrapper: true
+  counts:
+    headings: 4
+    code_blocks: 1
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - SQL Server
+  - Storage
+  expected_warnings: []
+- id: R08
+  category: extracted
+  rel_path: extracted/R08.md
+  sha256: a47f994beaf6c45080cd6e8fde4b09297f53e88cf63bd20f9b8a7fbb0c57fd79
+  title: 'برش R08: تمرین پایان فصل، تیترهای تو‌در‌تو و کد'
+  source_range: 309-362
+  wrapper: true
+  counts:
+    headings: 8
+    code_blocks: 2
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - Buffer Pool
+  - SQL Server
+  expected_warnings: []
+- id: R09
+  category: extracted
+  rel_path: extracted/R09.md
+  sha256: f3c6d64b4a3e07f218d31c8eb0bfbb392878d20a4bd2b631604186dd874ce0b7
+  title: 'برش R09: منابع مجازی و زیرنویس بدون تصویر'
+  source_range: 395-406
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - SQL Server
+  - Server
+  expected_warnings:
+  - caption_without_image @ شکل ۲-۱
+- id: R10
+  category: extracted
+  rel_path: extracted/R10.md
+  sha256: 285865c163f0b92e2be168266cfbfe679853da09e1b1798adfdcde6d085cb37c
+  title: 'برش R10: CPU/vCPU و جهت عبارت‌های لاتین در نثر'
+  source_range: 407-418
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Physical
+  - Hypervisor
+  expected_warnings: []
+- id: R11
+  category: extracted
+  rel_path: extracted/R11.md
+  sha256: eae49b61efface1a437d13b0a67c7262ad0ee98f55474c9fa0ffb09c50a4f8cb
+  title: 'برش R11: لایه‌های تنظیم عملکرد و زیرنویس مستقل'
+  source_range: 429-436
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - SQL Server
+  - Management
+  expected_warnings:
+  - caption_without_image @ شکل ۲-۲
+- id: R12
+  category: extracted
+  rel_path: extracted/R12.md
+  sha256: 1038e1f4b46ff3c105ad2ce5da5d649653346bd0c642d1505279e83b6cb09c60
+  title: 'برش R12: Storage و واحدها و اصطلاحات فنی'
+  source_range: 457-468
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - SQL Server
+  - Storage
+  expected_warnings: []
+- id: R13
+  category: extracted
+  rel_path: extracted/R13.md
+  sha256: 788dc4444331206a08ef24b35478498e81b33ec9ef56e1b7cae778850ae0f73e
+  title: 'برش R13: طراحی Volume، جدول و هشدار'
+  source_range: 501-520
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - D:\SQLData
+  - SQL Server
+  expected_warnings: []
+- id: R14
+  category: extracted
+  rel_path: extracted/R14.md
+  sha256: 4c95e92bd0827b5e26db974c7d07a0f1d5882822c323b32e8cc3ee5975ed14e5
+  title: 'برش R14: چک‌لیست پایان فصل دوم، Lab/Important Note'
+  source_range: 533-562
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 2
+    custom_styles: 2
+  sensitive_strings:
+  - SQL Server
+  - Server
+  expected_warnings: []
+- id: R15
+  category: extracted
+  rel_path: extracted/R15.md
+  sha256: d5dc6a20f876cbc9212830d05ed2568e7c71c2b81f6a4653c3af93b9068bc16d
+  title: 'برش R15: مقدمهٔ فصل سوم، گلوله‌های literal و جریان متنی عمودی'
+  source_range: 563-636
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 1
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - Buffer Pool
+  - MAXDOP
+  - Collation
+  - SQL Server
+  expected_warnings: []
+- id: R16
+  category: extracted
+  rel_path: extracted/R16.md
+  sha256: 66e12ce3d547b81b56236ff1e77874f5e853e967e15f63929d47d7d40822b718
+  title: 'برش R16: برنامهٔ نصب، زیرتیترهای متوالی و جدول'
+  source_range: 637-828
+  wrapper: true
+  counts:
+    headings: 8
+    code_blocks: 5
+    tables: 4
+    images: 0
+    mermaid_blocks: 0
+    callouts: 2
+    custom_styles: 2
+  sensitive_strings:
+  - VMware ESXi
+  - SQL Server Database Engine
+  - Collation
+  - SQL Server
+  expected_warnings: []
+- id: R17
+  category: extracted
+  rel_path: extracted/R17.md
+  sha256: e90135d73ab469685489dd4a1c2b2479ffacaa347a7e78a98f54319b31d12aea
+  title: 'برش R17: PowerShell، خروجی چندخطی و یادداشت‌ها'
+  source_range: 829-960
+  wrapper: true
+  counts:
+    headings: 6
+    code_blocks: 3
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 2
+    custom_styles: 2
+  sensitive_strings:
+  - SQL Server
+  - Windows
+  expected_warnings: []
+- id: R18
+  category: extracted
+  rel_path: extracted/R18.md
+  sha256: 3ed7ef19c724fdd51ddf4ebfbe16c6f1fd078bd1618c71cf81ce511ea81da99c
+  title: 'برش R18: Volume و مسیر Windows'
+  source_range: 961-1032
+  wrapper: true
+  counts:
+    headings: 5
+    code_blocks: 2
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - SQL Server
+  - Volume
+  expected_warnings: []
+- id: R19
+  category: extracted
+  rel_path: extracted/R19.md
+  sha256: 224f1b60baaca34f0288406064471b0a701ceb184a2a9ee4f2232c2599e94f46
+  title: 'برش R19: console، واحد ظرفیت و هشدار'
+  source_range: 1033-1099
+  wrapper: true
+  counts:
+    headings: 4
+    code_blocks: 6
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - SQL Server
+  - System
+  expected_warnings: []
+- id: R20
+  category: extracted
+  rel_path: extracted/R20.md
+  sha256: 55499bbc0227c5e8dac89a5495fe3aa65934ce61439ef2c2c1b8765c4929dbf4
+  title: 'برش R20: Named Instance و بک‌اسلش در متن/کد'
+  source_range: 1148-1185
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 2
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - SQL Server
+  - Default
+  expected_warnings: []
+- id: R21
+  category: extracted
+  rel_path: extracted/R21.md
+  sha256: a87dfc965b4a0bbfb7ed678985490ae8f3b3c77dfd530282184461e202fe147b
+  title: 'برش R21: حساب سرویس، Permission و تیترهای مخلوط بلند'
+  source_range: 1221-1299
+  wrapper: true
+  counts:
+    headings: 6
+    code_blocks: 5
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - SQL Server
+  - Service
+  expected_warnings: []
+- id: R22
+  category: extracted
+  rel_path: extracted/R22.md
+  sha256: 25d99f3bfa2e39021614f237dbb6bf6d43c158c67c83ee6d3b35cf29e9b1316d
+  title: 'برش R22: احراز هویت، هشدار و کد'
+  source_range: 1300-1341
+  wrapper: true
+  counts:
+    headings: 4
+    code_blocks: 1
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - SQL Server
+  - Authentication
+  expected_warnings: []
+- id: R23
+  category: extracted
+  rel_path: extracted/R23.md
+  sha256: facfe43b68821a116cca0f2108eb03e92c467e51c0fd1aecc99f4cfc979a827a
+  title: 'برش R23: Collation، underscore و شناسهٔ لاتین بلند'
+  source_range: 1342-1419
+  wrapper: true
+  counts:
+    headings: 4
+    code_blocks: 4
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - Collation
+  - SQL Server
+  expected_warnings: []
+- id: R24
+  category: extracted
+  rel_path: extracted/R24.md
+  sha256: 9bc58d5585e0524a20f305e02898af16485d7c279c3fa5211b2638a5c0919ba9
+  title: 'برش R24: نصب و Screenshot Recommendation؛ بدون جعل تصویر'
+  source_range: 1420-1527
+  wrapper: true
+  counts:
+    headings: 9
+    code_blocks: 3
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 2
+    custom_styles: 2
+  sensitive_strings:
+  - Collation
+  - SQL Server
+  expected_warnings: []
+- id: R25
+  category: extracted
+  rel_path: extracted/R25.md
+  sha256: 6a6a09da7c72d445bb0d7843141b1632414661a8e88f754008ed2632080de855
+  title: 'برش R25: شبکه، TCP و پورت/مسیر در متن مخلوط'
+  source_range: 1568-1631
+  wrapper: true
+  counts:
+    headings: 2
+    code_blocks: 5
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - SQL Server
+  - Network
+  expected_warnings: []
+- id: R26
+  category: extracted
+  rel_path: extracted/R26.md
+  sha256: db04dc0b0ea0e9dece9ea3521fb5aba1545cd4aa1b507f8430afe96e590a0315
+  title: 'برش R26: محاسبهٔ حافظه، اعداد، واحد و DBA Note'
+  source_range: 1692-1755
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 3
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - SQL Server
+  - server
+  expected_warnings: []
+- id: R27
+  category: extracted
+  rel_path: extracted/R27.md
+  sha256: 0cacdb4b0ce8c7519d5ad7b0d297f75566a7b60475d70578132de0d8ca3eeec1
+  title: 'برش R27: MAXDOP، کد کوتاه و پاراگراف دوزبانه'
+  source_range: 1756-1787
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 2
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - MAXDOP
+  - SQL Server
+  expected_warnings: []
+- id: R28
+  category: extracted
+  rel_path: extracted/R28.md
+  sha256: 3cb0fcf03474481066f418a7e7d33afde2ca128644d5c20a60135ecca5ff1714
+  title: 'برش R28: اعتبارسنجی نصب؛ برش بلند عمدی برای شکست چندصفحه‌ای'
+  source_range: 1810-2271
+  wrapper: true
+  counts:
+    headings: 12
+    code_blocks: 21
+    tables: 2
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - MAXDOP
+  - Collation
+  - SQL Server
+  expected_warnings: []
+- id: R29
+  category: extracted
+  rel_path: extracted/R29.md
+  sha256: aba22450f3ade1779a3435022f91a2f4ef54a8492fdd18cb4c913a210a49ed29
+  title: 'برش R29: معماری منطقی/فیزیکی و درخت متنی'
+  source_range: 2336-2381
+  wrapper: true
+  counts:
+    headings: 2
+    code_blocks: 3
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - SQL Server
+  - Database
+  expected_warnings: []
+- id: R30
+  category: extracted
+  rel_path: extracted/R30.md
+  sha256: c69adcb256e37b75f30e889045ece6f3d0b9980dfdf9423fc3678b5535993c73
+  title: 'برش R30: شیت طراحی و جدول اطلاعات'
+  source_range: 2382-2425
+  wrapper: true
+  counts:
+    headings: 2
+    code_blocks: 0
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Collation
+  - Database
+  expected_warnings: []
+- id: R31
+  category: extracted
+  rel_path: extracted/R31.md
+  sha256: fb3325341f0748c304076b2d1c48ed688212d26e5dcd2913ea303088b01abf9a
+  title: 'برش R31: Recovery Model، جدول چهارستونی، SQL و Warning'
+  source_range: 2460-2505
+  wrapper: true
+  counts:
+    headings: 2
+    code_blocks: 2
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - SQL Server
+  - Recovery
+  expected_warnings: []
+- id: R32
+  category: extracted
+  rel_path: extracted/R32.md
+  sha256: bb4b7aa9b9e0d28c0f66c8b1a18e276b4da352ada5f599fcfa0bccca0aa6439f
+  title: 'برش R32: ساخت Database، SQL بلند و توصیهٔ اسکرین‌شات'
+  source_range: 2506-2596
+  wrapper: true
+  counts:
+    headings: 4
+    code_blocks: 3
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - D:\SQLData
+  - Collation
+  expected_warnings: []
+- id: R33
+  category: extracted
+  rel_path: extracted/R33.md
+  sha256: b5af0415a39dfb8ec5f6d34c29d979bd68f5d28b577da7449be7fdf77426d3fa
+  title: 'برش R33: نام فایل منطقی/فیزیکی و علائم مسیر'
+  source_range: 2597-2631
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 4
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - SQL Server
+  - Logical
+  expected_warnings: []
+- id: R34
+  category: extracted
+  rel_path: extracted/R34.md
+  sha256: 32ec9f61a5594e3c3be55347e2d33db1769772752fc92d8e0e788643eb140b48
+  title: 'برش R34: Filegroup و نویسه‌های درخت'
+  source_range: 2644-2714
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 5
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Filegroup
+  - Container
+  expected_warnings: []
+- id: R35
+  category: extracted
+  rel_path: extracted/R35.md
+  sha256: c3bcb2f198028a25f5def88f7f017ca00afbdf3aac1d7655d703ff741c83fc54
+  title: 'برش R35: فهرست و ظرفیت‌گذاری اولیه'
+  source_range: 2715-2740
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - SQL Server
+  - Initial
+  expected_warnings: []
+- id: R36
+  category: extracted
+  rel_path: extracted/R36.md
+  sha256: 74d2277b18d80a2898f968673e31d440923cef9730953f890f830b6cdf5308d9
+  title: 'برش R36: Autogrowth، درصد و مقادیر SQL'
+  source_range: 2741-2782
+  wrapper: true
+  counts:
+    headings: 1
+    code_blocks: 2
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - SQL Server
+  - Autogrowth
+  expected_warnings: []
+- id: R37
+  category: extracted
+  rel_path: extracted/R37.md
+  sha256: 34b64e057bab11d8e9abe5091e981af0d18e0e368bac3dc231f50fa299e5eaca
+  title: 'برش R37: درخت متنی و تشخیص خطا'
+  source_range: 2791-2828
+  wrapper: true
+  counts:
+    headings: 6
+    code_blocks: 1
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Filegroup
+  - Volume
+  expected_warnings: []
+- id: R38
+  category: extracted
+  rel_path: extracted/R38.md
+  sha256: 094505d669919d04aec8e1d5f9e82e1dfbef303e1908bc2786507cf650bca273
+  title: 'برش R38: Query بلند، هشدار و زیرتیترهای متوالی'
+  source_range: 2870-2954
+  wrapper: true
+  counts:
+    headings: 4
+    code_blocks: 4
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - Filegroup
+  - master
+  expected_warnings: []
+- id: R39
+  category: extracted
+  rel_path: extracted/R39.md
+  sha256: e2c8a2534ed90c3953fb45ead0b2361c92627eb125f8450fb8d73771da0bb7ed
+  title: 'برش R39: Queryهای پایش چندخطی'
+  source_range: 2955-3092
+  wrapper: true
+  counts:
+    headings: 7
+    code_blocks: 7
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - sys.databases
+  - SQL Server
+  expected_warnings: []
+- id: R40
+  category: extracted
+  rel_path: extracted/R40.md
+  sha256: 76699d375abcaa6ca9f7673681b9b5684fd16110fcd9fe1d4cdbb684631e2d25
+  title: 'برش R40: Query با بلوک ۴۴خطی و جدول تحویل با سلول‌های خالی'
+  source_range: 3093-3235
+  wrapper: true
+  counts:
+    headings: 5
+    code_blocks: 2
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Collation
+  - Capacity
+  expected_warnings: []
+- id: S01
+  category: synthetic
+  rel_path: synthetic/S01.md
+  sha256: 728b20f481b192076470a66a38e40e72e60b91936ea38f3b92c16e730c9c947c
+  title: 'نمونه ساختگی S01: متن مخلوط با پرانتز، گیومه، درصد، تاریخ، IP، URL، دامنه
+    و مسیر Windows؛ عبارت لاتین چندکلمه‌ای میان bold/link/italic'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Buffer Pool
+  - SQL Server Database Engine
+  - Always On Availability Groups
+  - SQL Server
+  expected_warnings: []
+- id: S02
+  category: synthetic
+  rel_path: synthetic/S02.md
+  sha256: b151601506e6262e4483dea63e1524f25ca8e43095e5f12f2c08fa79369221e3
+  title: 'نمونه ساختگی S02: تیترهای ۱ تا ۶، شماره‌های فارسی/عربی/لاتین، شمارهٔ چندبخشی
+    بلند، عنوان دو تا چهارخطی، شناسه و لینک داخلی'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 7
+    code_blocks: 1
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Header
+  - literal
+  expected_warnings: []
+- id: S03
+  category: synthetic
+  rel_path: synthetic/S03.md
+  sha256: f7486ed359a1af4a438ea3ac94efee60d0229b0ed1a9db88d5468c3f2f35ed5a
+  title: 'نمونه ساختگی S03: هر شش custom-style، calloutهای class-based، عنوان صریح/ضمنی،
+    دو سطح nesting و نمونهٔ literal در code fence'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 1
+    code_blocks: 1
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 9
+    custom_styles: 6
+  sensitive_strings:
+  - master
+  - Failover
+  expected_warnings: []
+- id: S04
+  category: synthetic
+  rel_path: synthetic/S04.md
+  sha256: 4292f2e1ed604e6d119bdb49f91ee1d7c3ff2dc66eae7c5a6fbb58a9240b56c8
+  title: 'نمونه ساختگی S04: فهرست bullet و ordered، شروع عدد غیر۱، alpha/roman، tight/loose،
+    سه سطح nesting، آیتم فقط انگلیسی کنار فارسی؛ literal bullet جدا'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Collation
+  - Firmware
+  expected_warnings: []
+- id: S05
+  category: synthetic
+  rel_path: synthetic/S05.md
+  sha256: 4c32aae9563ca0912e10d9196cfb33fa15643e11076e5724e42e732c84b5efd1
+  title: 'نمونه ساختگی S05: جدول‌های دو، سه و شش‌ستونی؛ یک جدول حداقل ۶۰ردیفی با متن
+    فارسی بلند، عدد، سرستون چندخطی و سلول خالی'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 5
+    code_blocks: 0
+    tables: 3
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Server
+  - Memory
+  expected_warnings: []
+- id: S06
+  category: synthetic
+  rel_path: synthetic/S06.md
+  sha256: 81dfee0ac6026f34f8e317b7af5693d2ca401c3e2b758de4040db291dac72d99
+  title: 'نمونه ساختگی S06: جدول داخل کادر، فهرست/تصویر/کد داخل سلول، quote و جدول
+    تو‌در‌تو در syntax معتبر Pandoc'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 1
+    code_blocks: 2
+    tables: 2
+    images: 1
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 0
+  sensitive_strings:
+  - SQL Server
+  - Database
+  expected_warnings: []
+- id: S07
+  category: synthetic
+  rel_path: synthetic/S07.md
+  sha256: 2054b5ecbf70ef6e205539bfe7c26768de64b4e8f9ab24ee2e20b3fec3875e63
+  title: 'نمونه ساختگی S07: SQL، PowerShell، console، Python و text؛ tab، indentation،
+    خط خالی، توضیح فارسی و خط بیش از ۱۹۰ نویسه'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 7
+    code_blocks: 6
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - session_id
+  - login_name
+  expected_warnings: []
+- id: S08
+  category: synthetic
+  rel_path: synthetic/S08.md
+  sha256: 70dfb1d4edf18bfb10c370f8feffde2c4357225de78c2b12445191ec4d49b0d7
+  title: 'نمونه ساختگی S08: بلوک کد بیشتر از دو صفحه، بلوک دارای خطوط خالی ابتدا/انتها،
+    درخت ASCII و box drawing'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 3
+    code_blocks: 2
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Primary_Data.mdf
+  - Secondary_Data_1.ndf
+  expected_warnings: []
+- id: S09
+  category: synthetic
+  rel_path: synthetic/S09.md
+  sha256: c23d7c75451d94f04d815ca3ef709a17062f5cf2ec112d0884aa2597a7e8c2a3
+  title: 'نمونه ساختگی S09: عکس افقی و عمودی واقعی با مجوز، PNG شفاف، تصویر کوچک inline،
+    reference image، نام فایل فارسی/فاصله/percent-encoding و caption'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 0
+    images: 9
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - شکل ۱-۱
+  - شکل ۱-۲
+  expected_warnings: []
+- id: S10
+  category: synthetic
+  rel_path: synthetic/S10.md
+  sha256: a9bb0e8bb45466e6eb63bae00ea89372ade03684dfd69674f95089b26324019b
+  title: 'نمونه ساختگی S10: Mermaid flowchart با جهت TB و LR، برچسب فارسی و لاتین،
+    متن بلند داخل گره، لبهٔ دارای عنوان'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 3
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 2
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - جریان فرآیندها
+  - مسیر جریان داده
+  expected_warnings: []
+- id: S11
+  category: synthetic
+  rel_path: synthetic/S11.md
+  sha256: c328ab306867660062aaeecf4533ec05372fce5a5553a78672d004eca1551768
+  title: 'نمونه ساختگی S11: Mermaid sequence، state و ER با فارسی؛ نمودار عریض و بلند
+    دارای تعداد عناصر معلوم'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 4
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 3
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - Transaction
+  - توالی ثبت تراکنش
+  expected_warnings: []
+- id: S12
+  category: synthetic
+  rel_path: synthetic/S12.md
+  sha256: f542ffbe6b84199b09b7140adb02ad950adc7609cf70a2c3f3f46cc52cef68da
+  title: 'نمونه ساختگی S12: Mermaid و تصویر داخل list، quote، Div، definition list،
+    جدول با syntax مناسب و footnote؛ fenceهای تودرتو'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 1
+    code_blocks: 0
+    tables: 0
+    images: 2
+    mermaid_blocks: 4
+    callouts: 1
+    custom_styles: 0
+  sensitive_strings:
+  - دیاگرام
+  - تصاویر
+  expected_warnings: []
+- id: S13
+  category: synthetic
+  rel_path: synthetic/S13.md
+  sha256: c6a0d78f5d98f10d79690885ce7bf7b6f3bdf3791f3da9131391140791b09899
+  title: 'نمونه ساختگی S13: پاورقی چندپاراگرافی، لینک، فهرست، inlineهای غنی و فرمول‌های
+    محدودهٔ پشتیبانی‌شدهٔ OMML'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 1
+    code_blocks: 1
+    tables: 0
+    images: 1
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - SQL Server
+  - Server
+  expected_warnings: []
+- id: S14
+  category: synthetic
+  rel_path: synthetic/S14.md
+  sha256: db75d16f16e54d943712a04bc2f8b13f83feefae352b011109520cd222bb1f14
+  title: 'نمونه ساختگی S14: مرز صفحه: تیتر، شروع کادر، تصویر/caption، جدول و کد پس
+    از متن با طول کنترل‌شده'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 2
+    code_blocks: 0
+    tables: 1
+    images: 0
+    mermaid_blocks: 0
+    callouts: 1
+    custom_styles: 1
+  sensitive_strings:
+  - caption
+  - variant
+  expected_warnings: []
+- id: S15
+  category: synthetic
+  rel_path: synthetic/S15.md
+  sha256: e477254aea49f43c091c2e714592a4e7def0df1d5ca1d98b98c5dbef86ee76a5
+  title: 'نمونه ساختگی S15: metadata، فهرست مطالب، چهار شروع فصل، appendix، heading
+    anchor و ارجاع داخلی'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 5
+    code_blocks: 0
+    tables: 0
+    images: 0
+    mermaid_blocks: 0
+    callouts: 0
+    custom_styles: 0
+  sensitive_strings:
+  - فهرست مطالب
+  - فهرست
+  expected_warnings: []
+- id: S16
+  category: synthetic
+  rel_path: synthetic/S16.md
+  sha256: 3e8f4c970a585de2b8509a29acc52145d6558d14f71bfe93e60fcc4a949c43aa
+  title: 'نمونه ساختگی S16: کتابچهٔ بلند فارسی ترکیبی از همهٔ موارد با تصاویر و Mermaid؛
+    آن‌قدر محتوا که در محیط مرجع بیش از ده صفحه شود'
+  source_range: null
+  wrapper: false
+  counts:
+    headings: 16
+    code_blocks: 12
+    tables: 12
+    images: 1
+    mermaid_blocks: 1
+    callouts: 14
+    custom_styles: 14
+  sensitive_strings:
+  - شکل ۱-۱
+  - شکل ۱-۲
+  - SQL Server
+  expected_warnings: []

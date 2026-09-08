@@ -250,8 +250,8 @@ def test_render_code_block_empty_and_indented_lines(renderer):
     code = "def foo():\n    x = 10\n\n    return x\n"
     tbl = renderer.render_code_block(code, language="python")
     paragraphs = tbl.cell(0, 0).paragraphs
-    # Exactly 4 lines (the 5th trailing newline stripped)
-    assert len(paragraphs) == 4
+    # Exactly 5 lines (preserving the trailing newline from AST)
+    assert len(paragraphs) == 5
     # 2nd line should preserve 4-space indentation
     p2 = paragraphs[1]
     assert p2.text == "    x = 10"

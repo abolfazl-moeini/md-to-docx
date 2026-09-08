@@ -10,6 +10,19 @@ from md_to_docx.mermaid import (
 )
 from md_to_docx.template import Template
 
+
+def _write_varied_png(path: Path) -> None:
+    """Minimal non-solid PNG so E01 validation accepts a mocked mmdc success."""
+    from PIL import Image, ImageDraw
+
+    im = Image.new("RGB", (120, 80), "white")
+    draw = ImageDraw.Draw(im)
+    draw.rectangle([8, 8, 52, 44], outline="#222222", fill="#6B2FA0")
+    draw.rectangle([64, 28, 112, 72], outline="#222222", fill="#17324D")
+    draw.line([52, 26, 64, 50], fill="#333333", width=2)
+    im.save(path)
+
+
 def test_caption_regex_matching():
     assert CAPTION_RE.match("شکل ۲-۱. معماری داخلی") is not None
     assert CAPTION_RE.match("Figure 1. Architecture") is not None
@@ -183,14 +196,18 @@ def test_render_mermaid_retries_next_browser_on_launch_failure(tmp_path, mocker,
             )
         out_idx = args[0].index("-o")
         out = Path(args[0][out_idx + 1])
-        out.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+        _write_varied_png(out)
         return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
 
     mocker.patch("subprocess.run", side_effect=fake_run)
     out_file = tmp_path / "diagram.png"
-    result = render_mermaid_to_png("graph TD\nA-->B", out_file, tmpl)
-    assert result == out_file
-    assert out_file.exists()
+    with pytest.raises(ConvertError) as exc_info:
+        render_mermaid_to_png("graph TD\nA-->B", out_file, tmpl)
+    assert "Failed to launch" in str(exc_info.value)
+    # F01: do not walk the rest of the desktop browser list after a launch crash.
+    with pytest.raises(ConvertError) as blocked:
+        render_mermaid_to_png("graph TD\nA-->B", out_file, tmpl)
+    assert "blocked" in str(blocked.value).lower()
 
 
 def test_find_browser_prefers_puppeteer_chrome_for_testing(tmp_path, monkeypatch):
@@ -230,17 +247,29 @@ def test_find_browser_prefers_puppeteer_chrome_for_testing(tmp_path, monkeypatch
 
 def test_render_mermaid_does_not_pollute_output_dir(mocker, tmp_path):
     tmpl = Template.load("purple_book")
-    mock_run = mocker.patch("subprocess.run")
-    mock_run.return_value.returncode = 0
-    mock_run.return_value.stderr = ""
-    mock_run.return_value.stdout = ""
+
+    def fake_run(cmd, **kwargs):
+        if "-o" in cmd:
+            dest = Path(cmd[cmd.index("-o") + 1])
+            if dest.suffix.lower() == ".svg":
+                dest.write_text(
+                    '<svg xmlns="http://www.w3.org/2000/svg"><text>A</text></svg>',
+                    encoding="utf-8",
+                )
+        result = mocker.MagicMock()
+        result.returncode = 0
+        result.stderr = ""
+        result.stdout = ""
+        return result
+
+    mocker.patch("subprocess.run", side_effect=fake_run)
 
     out_file = tmp_path / "diagram_001.png"
-    out_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    _write_varied_png(out_file)
     render_mermaid_to_png("graph TD\nA-->B", out_file, tmpl)
 
     leftover = {p.name for p in tmp_path.iterdir()}
-    assert leftover == {"diagram_001.png"}
+    assert leftover == {"diagram_001.png", "diagram_001.svg"}
 
 
 def test_mermaid_artifact_persistence_after_context_exit(tmp_path):
