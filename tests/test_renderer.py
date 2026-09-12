@@ -29,8 +29,8 @@ def test_render_paragraph_rtl(renderer):
     p = renderer.render_paragraph("این یک متن نمونه به زبان فارسی است.")
     xml = p._p.xml
     assert "<w:bidi" in xml
-    # finilize.v3.md Section 1.2: purple_book paragraph_align defaults to start (maps to right in RTL)
-    assert 'w:jc w:val="right"' in xml
+    # finilize.v3.md Section 1.2: purple_book paragraph_align defaults to start (natural flush-right in RTL)
+    assert "w:jc" not in xml
     assert 'w:cs="Vazirmatn"' in xml
 
 def test_render_heading_with_badge(renderer):

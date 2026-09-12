@@ -178,6 +178,7 @@ def _docx_is_rtl(docx_path: Path) -> bool:
 
 def _apply_pdf_r2l_direction(pdf_path: Path) -> None:
     """Injects /ViewerPreferences << /Direction /R2L >> into the PDF catalog so PDF viewers render RTL."""
+    tmp_target = None
     try:
         import pypdf
         from pypdf.generic import NameObject, DictionaryObject
@@ -189,12 +190,16 @@ def _apply_pdf_r2l_direction(pdf_path: Path) -> None:
             vp = DictionaryObject()
             writer._root_object[NameObject("/ViewerPreferences")] = vp
         vp[NameObject("/Direction")] = NameObject("/R2L")
-        tmp_target = pdf_path.with_name(f"{pdf_path.stem}.r2l.tmp")
+        tmp_target = pdf_path.with_name(f".{pdf_path.stem}.r2l_{uuid.uuid4().hex[:8]}.tmp")
         with open(tmp_target, "wb") as f:
             writer.write(f)
         os.replace(tmp_target, pdf_path)
     except Exception:
-        pass
+        if tmp_target is not None and tmp_target.exists():
+            try:
+                tmp_target.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def convert_docx_to_pdf(

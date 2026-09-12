@@ -1,6 +1,6 @@
 {
   "name": "md-to-docx",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Persian / RTL Markdown + Mermaid to DOCX converter",
   "engines": {
     "node": ">=22.12.0"

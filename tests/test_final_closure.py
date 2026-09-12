@@ -415,9 +415,24 @@ def test_f10_list_uses_hanging_indent(tmp_path):
     for p in doc.paragraphs:
         if "آیتم فارسی" in p.text:
             found = True
+            # In RTL lists, right_indent is set and negative hanging indent is omitted
+            # to prevent LibreOffice inverted hanging indent defect.
+            assert p.paragraph_format.right_indent is not None
+            assert p.paragraph_format.right_indent > 0
+    assert found
+
+    # Verify LTR list preserves negative first_line_indent (hanging indent)
+    md_ltr = "* English item one\n* English item two\n"
+    out_ltr = tmp_path / "lst_ltr.docx"
+    convert_markdown_to_docx(content=md_ltr, output_path=out_ltr, template="purple_book", overwrite=True)
+    doc_ltr = docx.Document(str(out_ltr))
+    found_ltr = False
+    for p in doc_ltr.paragraphs:
+        if "English item" in p.text:
+            found_ltr = True
             assert p.paragraph_format.first_line_indent is not None
             assert p.paragraph_format.first_line_indent < 0
-    assert found
+    assert found_ltr
 
 
 def test_f12_source_label_oracle_and_distinct_themes():

@@ -32,8 +32,14 @@ def test_set_paragraph_align():
 
     set_paragraph_bidi(p, bidi=True)
     set_paragraph_align(p, "start")
-    assert 'w:jc w:val="right"' in p._p.xml
-    assert 'w:jc w:val="start"' not in p._p.xml
+    # In RTL, omitting w:jc prevents LibreOffice from flipping alignment to left
+    assert 'w:jc' not in p._p.xml
+
+    set_paragraph_align(p, "both")
+    assert 'w:jc w:val="both"' in p._p.xml
+
+    set_paragraph_align(p, "end")
+    assert 'w:jc w:val="left"' in p._p.xml
 
 def test_set_run_cs_font():
     doc = Document()

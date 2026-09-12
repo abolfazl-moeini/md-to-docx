@@ -970,7 +970,61 @@ def test_cli_to_pdf_additional_validations(runner, tmp_path):
 
 def test_package_metadata_and_exports():
     import md_to_docx
-    assert md_to_docx.__version__ == "0.2.0"
+    assert md_to_docx.__version__ == "0.3.0"
     for symbol in md_to_docx.__all__:
         assert hasattr(md_to_docx, symbol), f"Missing public symbol '{symbol}' in md_to_docx"
+
+
+def test_docx_is_rtl_detection(tmp_path):
+    from md_to_docx.pdf import _docx_is_rtl
+    from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    # 1. Non-RTL docx
+    doc_ltr = Document()
+    doc_ltr.add_paragraph("Hello world")
+    p_ltr = tmp_path / "ltr.docx"
+    doc_ltr.save(str(p_ltr))
+    assert _docx_is_rtl(p_ltr) is False
+
+    # 2. RTL docx with w:bidi
+    doc_rtl = Document()
+    p = doc_rtl.add_paragraph("سلام دنیا")
+    pPr = p._p.get_or_add_pPr()
+    bidi = OxmlElement("w:bidi")
+    bidi.set(qn("w:val"), "1")
+    pPr.append(bidi)
+    p_rtl = tmp_path / "rtl.docx"
+    doc_rtl.save(str(p_rtl))
+    assert _docx_is_rtl(p_rtl) is True
+
+    # 3. Non-existent file
+    assert _docx_is_rtl(tmp_path / "nonexistent.docx") is False
+
+
+def test_apply_pdf_r2l_direction(tmp_path):
+    from md_to_docx.pdf import _apply_pdf_r2l_direction
+    import pypdf
+
+    # Create a minimal valid PDF
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    test_pdf = tmp_path / "test_catalog.pdf"
+    with open(test_pdf, "wb") as f:
+        writer.write(f)
+
+    # Initially has no ViewerPreferences
+    reader = pypdf.PdfReader(str(test_pdf))
+    assert "/ViewerPreferences" not in reader.trailer["/Root"]
+
+    # Apply R2L
+    _apply_pdf_r2l_direction(test_pdf)
+
+    # Verify ViewerPreferences << /Direction /R2L >> is injected
+    reader_after = pypdf.PdfReader(str(test_pdf))
+    root = reader_after.trailer["/Root"]
+    assert "/ViewerPreferences" in root
+    vp = root["/ViewerPreferences"]
+    assert vp["/Direction"] == "/R2L"
 

@@ -727,10 +727,10 @@ dir: rtl
             if jc is not None:
                 body_jc_vals.append(jc.get(qn("w:val")))
 
-    assert len(body_jc_vals) == 1
-    # For RTL paragraph, 'start' maps to Word-safe 'right', NOT 'both'
-    assert body_jc_vals[0] == "right"
-    assert body_jc_vals[0] != "both"
+    # For RTL paragraph, 'start' (ragged right) naturally aligns to the right margin
+    # by omitting contradictory w:jc (preventing LibreOffice reverse flipping) and is never 'both'
+    assert len(body_jc_vals) == 0 or body_jc_vals[0] == "right"
+    assert "both" not in body_jc_vals
 
 
 def test_paragraph_align_both_restores_justification(tmp_path):

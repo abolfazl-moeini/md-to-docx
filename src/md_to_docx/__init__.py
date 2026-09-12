@@ -12,7 +12,7 @@ from md_to_docx.to_md import convert_docx_to_markdown
 from md_to_docx.mermaid import ConvertError
 from md_to_docx.options import GeneratorOptions, DEFAULT_FONT_FAMILY
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "convert_markdown_to_docx",
     "convert_markdown_to_pdf",

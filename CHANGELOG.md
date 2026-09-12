@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-13
+
+### Added
+- **Cross-Platform Inter-Process File Locking (`src/md_to_docx/pdf.py`, `src/md_to_docx/pipeline.py`)**:
+  - Implemented cross-platform publish and health locking using `msvcrt.locking` on Windows (`nt`) and `fcntl.flock` on POSIX (`macOS/Linux`).
+  - Protected against race conditions during zero-byte lock initialization on Windows.
+- **LibreOffice CTL & RTL Auto-Seeding (`src/md_to_docx/pdf.py`)**:
+  - Pre-seeded isolated LibreOffice user profile with Complex Text Layout (`CTLFont`, `CTLSequenceChecking`) and `fa-IR` system locale settings (`registrymodifications.xcu`) for accurate bidirectional script rendering in PDF export.
+- **PDF Catalog Bidirectional Direction Injection (`src/md_to_docx/pdf.py`)**:
+  - Injected `/ViewerPreferences << /Direction /R2L >>` into generated PDF catalog dictionaries for RTL documents using `pypdf`.
+  - Added `pypdf>=4.0.0` to core dependencies in `pyproject.toml`.
+
+### Changed
+- **Natural RTL Paragraph Alignment (`src/md_to_docx/oxml.py`)**:
+  - Omitted contradictory `w:jc="right"` in RTL paragraphs with `start` alignment, allowing Word, Pages, and LibreOffice to naturally align to the right margin without LibreOffice flipping alignment to left.
+- **RTL List Indentation Hygiene (`src/md_to_docx/pandoc_json.py`)**:
+  - Replaced negative hanging indents on RTL list items with clean right indents to prevent LibreOffice inverted hanging indent rendering defects.
+
+### Fixed
+- Hardened XML namespace prefixes in `fonts_embed.py` to prevent redundant `ns0:` namespace prefix injection.
+- Strict schema bidi element placement before `w:docGrid` in section properties (`set_doc_bidi`).
+
 ## [0.2.0] - 2026-09-12
 
 ### Added
