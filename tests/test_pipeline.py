@@ -382,3 +382,47 @@ def test_pipeline_convert_with_content_string(tmp_path):
     assert res.exists()
     assert res.stat().st_size > 0
 
+
+def test_publish_lock_posix(tmp_path):
+    from md_to_docx.pipeline import _publish_lock
+
+    lock_file = tmp_path / ".test.publish.lock"
+    with _publish_lock(lock_file):
+        assert lock_file.exists()
+
+
+def test_publish_lock_windows_simulation(tmp_path, monkeypatch):
+    import sys
+    from unittest.mock import MagicMock
+    from md_to_docx.pipeline import _publish_lock
+
+    mock_msvcrt = MagicMock()
+    mock_msvcrt.LK_LOCK = 1
+    mock_msvcrt.LK_UNLCK = 2
+    monkeypatch.setattr("os.name", "nt")
+    monkeypatch.setitem(sys.modules, "msvcrt", mock_msvcrt)
+
+    lock_file = tmp_path / ".test_win.publish.lock"
+    with _publish_lock(lock_file):
+        assert lock_file.exists()
+
+    assert mock_msvcrt.locking.call_count == 2
+    # Verify LK_LOCK and LK_UNLCK calls
+    first_call = mock_msvcrt.locking.call_args_list[0]
+    second_call = mock_msvcrt.locking.call_args_list[1]
+    assert first_call[0][1] == mock_msvcrt.LK_LOCK
+    assert second_call[0][1] == mock_msvcrt.LK_UNLCK
+
+
+def test_publish_lock_failure_raises_converterror(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+    from md_to_docx.pipeline import _publish_lock, ConvertError
+
+    monkeypatch.setattr("os.open", MagicMock(side_effect=OSError("Lock file locked by another system")))
+    lock_file = tmp_path / ".test_fail.publish.lock"
+
+    with pytest.raises(ConvertError, match="Could not acquire publish lock") if "ConvertError" in locals() else pytest.raises(Exception):
+        with _publish_lock(lock_file):
+            pass
+
+

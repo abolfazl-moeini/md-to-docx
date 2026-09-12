@@ -102,30 +102,68 @@ _THREAD_LOCK = threading.RLock()
 @contextlib.contextmanager
 def _publish_lock(lock_path: Path):
     """
-    Inter-process exclusive lock. The lock file is kept (not unlinked) so waiters
-    share the same inode. Failure to lock is an error, not a silent fallback.
+    Cross-platform inter-process exclusive lock.
+    Uses fcntl on POSIX systems and msvcrt on Windows.
     """
     with _THREAD_LOCK:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        is_windows = os.name == "nt"
+
+        if not is_windows:
+            try:
+                import fcntl
+            except ImportError as e:
+                raise ConvertError(
+                    "Inter-process publish locking requires fcntl (unavailable on this platform)."
+                ) from e
+
         try:
-            import fcntl
-        except ImportError as e:
+            lock_fd = os.open(
+                str(lock_path),
+                os.O_CREAT | os.O_RDWR | getattr(os, "O_BINARY", 0),
+                0o600,
+            )
+        except OSError as e:
             raise ConvertError(
-                "Inter-process publish locking requires fcntl (unavailable on this platform)."
+                f"Could not acquire publish lock '{lock_path}': {e}"
             ) from e
-        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            if is_windows:
+                import msvcrt
+
+                try:
+                    if os.path.getsize(lock_path) == 0:
+                        try:
+                            os.write(lock_fd, b"\0")
+                        except OSError:
+                            pass
+                    os.lseek(lock_fd, 0, os.SEEK_SET)
+                except OSError:
+                    pass
+
+                msvcrt.locking(lock_fd, msvcrt.LK_LOCK, 1)
+            else:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
         except OSError as e:
             os.close(lock_fd)
-            raise ConvertError(f"Could not acquire publish lock '{lock_path}': {e}") from e
+            raise ConvertError(
+                f"Could not acquire publish lock '{lock_path}': {e}"
+            ) from e
+
         try:
             yield
         finally:
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                if is_windows:
+                    os.lseek(lock_fd, 0, os.SEEK_SET)
+                    msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
             except OSError:
                 pass
+
             os.close(lock_fd)
 
 

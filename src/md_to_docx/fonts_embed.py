@@ -24,6 +24,20 @@ CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
+# Register standard namespaces so ET.tostring does not inject ns0: prefixes that break LibreOffice
+ET.register_namespace("", CT_NS)
+ET.register_namespace("", REL_NS)
+ET.register_namespace("w", W_NS)
+ET.register_namespace("r", R_NS)
+
+
+def _serialize_element(root: ET.Element) -> bytes:
+    xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    xml_str = xml_bytes.decode("utf-8")
+    xml_str = re.sub(r'</?ns0:', lambda m: m.group(0).replace('ns0:', ''), xml_str)
+    xml_str = xml_str.replace('xmlns:ns0=', 'xmlns=')
+    return xml_str.encode("utf-8")
+
 
 def read_font_fstype(font_path: Path) -> Optional[int]:
     """Reads OS/2 fsType from TTF file according to OpenType / TrueType specification.
@@ -246,7 +260,7 @@ def embed_fonts_in_docx(
                             },
                         )
                         root.append(ft_rel)
-                    new_rels = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                    new_rels = _serialize_element(root)
                     zout.writestr(item, new_rels)
 
                 elif item.filename == "[Content_Types].xml":
@@ -278,7 +292,7 @@ def embed_fonts_in_docx(
                             },
                         )
                         root.append(o_el)
-                    new_ct = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                    new_ct = _serialize_element(root)
                     zout.writestr(item, new_ct)
 
                 elif item.filename == "word/settings.xml":
@@ -293,7 +307,7 @@ def embed_fonts_in_docx(
                     subset_el = root.find(f"{{{W_NS}}}saveSubsetFonts")
                     if subset_el is not None:
                         root.remove(subset_el)
-                    new_settings = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                    new_settings = _serialize_element(root)
                     zout.writestr(item, new_settings)
 
                 elif item.filename == "word/fontTable.xml":
@@ -412,8 +426,8 @@ def embed_fonts_in_docx(
                     bold_el.set(f"{{{R_NS}}}id", bold_rid)
                     bold_el.set(f"{{{W_NS}}}fontKey", bold_guid)
 
-            zout.writestr("word/_rels/fontTable.xml.rels", ET.tostring(ft_rels_root, encoding="utf-8", xml_declaration=True))
-            zout.writestr("word/fontTable.xml", ET.tostring(ft_root, encoding="utf-8", xml_declaration=True))
+            zout.writestr("word/_rels/fontTable.xml.rels", _serialize_element(ft_rels_root))
+            zout.writestr("word/fontTable.xml", _serialize_element(ft_root))
 
         os.replace(tmp_docx, docx_path)
         return "embedded"
@@ -450,7 +464,7 @@ def strip_embedded_fonts(docx_path: Path) -> None:
                             for d in list(root.findall(f"{{{CT_NS}}}Default")):
                                 if d.get("Extension", "").lower() == "odttf":
                                     root.remove(d)
-                            zout.writestr(item, ET.tostring(root, encoding="utf-8", xml_declaration=True))
+                            zout.writestr(item, _serialize_element(root))
                         except Exception:
                             zout.writestr(item, zin.read(item.filename))
 
@@ -460,7 +474,7 @@ def strip_embedded_fonts(docx_path: Path) -> None:
                             for el in list(root):
                                 if el.tag in (f"{{{W_NS}}}embedTrueTypeFonts", f"{{{W_NS}}}saveSubsetFonts"):
                                     root.remove(el)
-                            zout.writestr(item, ET.tostring(root, encoding="utf-8", xml_declaration=True))
+                            zout.writestr(item, _serialize_element(root))
                         except Exception:
                             zout.writestr(item, zin.read(item.filename))
 

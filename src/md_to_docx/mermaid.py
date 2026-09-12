@@ -149,26 +149,56 @@ class _ProcessFileLock:
     def __init__(self, path: Path):
         self.path = path
         self._fd = None
+        self._fileno = None
 
     def __enter__(self):
-        if not HAS_FCNTL:
-            return self
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._fd = open(self.path, "a+")
-            fcntl.flock(self._fd.fileno(), fcntl.LOCK_EX)
+            if os.name == "nt":
+                import msvcrt
+
+                self._fd = open(self.path, "a+b")
+                self._fileno = self._fd.fileno()
+                if os.path.getsize(self.path) == 0:
+                    try:
+                        self._fd.write(b"\0")
+                        self._fd.flush()
+                    except OSError:
+                        pass
+                self._fd.seek(0)
+                msvcrt.locking(self._fileno, msvcrt.LK_LOCK, 1)
+            elif HAS_FCNTL:
+                self._fd = open(self.path, "a+")
+                self._fileno = self._fd.fileno()
+                fcntl.flock(self._fileno, fcntl.LOCK_EX)
         except OSError:
+            if self._fd is not None:
+                try:
+                    self._fd.close()
+                except OSError:
+                    pass
             self._fd = None
+            self._fileno = None
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._fd is not None:
+        if self._fd is not None and self._fileno is not None:
             try:
-                fcntl.flock(self._fd.fileno(), fcntl.LOCK_UN)
+                if os.name == "nt":
+                    import msvcrt
+
+                    self._fd.seek(0)
+                    msvcrt.locking(self._fileno, msvcrt.LK_UNLCK, 1)
+                elif HAS_FCNTL:
+                    fcntl.flock(self._fileno, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
                 self._fd.close()
             except OSError:
                 pass
             self._fd = None
+            self._fileno = None
 
 
 def _health_file_path() -> Optional[Path]:

@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Temporary isolated user profile generation (`-env:UserInstallation`) for LibreOffice to prevent lock collisions and configuration pollution.
   - Robust process group isolation (`start_new_session=True` / `CREATE_NEW_PROCESS_GROUP`) with guaranteed zombie cleanup (`os.killpg(SIGKILL)` / `taskkill`) on timeout.
   - Media directory hygiene: suppresses temporary Mermaid diagrams folder during PDF output unless `--keep-docx` or explicit `--media-dir` is requested.
-  - File locking with `fcntl.flock` serialization (`.{stem}.pdf.publish.lock` and `.{stem}.publish.lock`).
+  - Cross-platform file locking with `fcntl.flock` on macOS/Linux and `msvcrt.locking` on Windows (`.{stem}.pdf.publish.lock` and `.{stem}.publish.lock`).
 - **Font Discovery & Injection for LibreOffice**:
   - Dynamic Fontconfig configuration (`fonts.conf`) and `SAL_FONTPATH` environment configuration passing template font directories (such as Vazirmatn) to LibreOffice.
   - XML escaping for directory paths containing special characters.

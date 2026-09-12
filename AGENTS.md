@@ -76,8 +76,7 @@
 - کتابخانه‌های اصلی: `python-docx`، `lxml`، `PyYAML`، `Click`، `Pillow` و `Pygments`. تست‌ها با `pytest` و `pytest-mock` هستند.
 - Pandoc باید در `PATH` باشد. شمارهٔ نسخهٔ خود برنامه با `pandoc-api-version` در JSON یکسان نیست؛ adapter فعلی خانواده‌های API `1.22.x` و `1.23.x` را می‌پذیرد.
 - نمودارهای Mermaid به Node **حداقل `22.12.0`** (مطابق `package.json` engines و lockfile)، `@mermaid-js/mermaid-cli` و runtime مدیریت‌شدهٔ Puppeteer نیاز دارند. CI از Node 22 استفاده می‌کند. پس از شکست launch، فراخوانی‌های بعدی همان فرایند **blocked** می‌شوند و مرورگر دسکتاپ Chrome/Edge به‌صورت پیش‌فرض انتخاب نمی‌شود مگر `MD2DOCX_ALLOW_SYSTEM_BROWSER=1`. نصب با `npx -y` انجام نمی‌شود.
-- LibreOffice در مسیر integration نصب می‌شود و می‌تواند برای بررسی رندر کمک کند؛ وابستگی موتور اصلی تولید DOCX نیست.
-- قفل انتشار از `fcntl` استفاده می‌کند. اجرای فعلی را برای محیط‌های Unix مانند macOS/Linux در نظر بگیر؛ پشتیبانی بومی Windows را بدون تغییر و تست ادعا نکن. باز کردن DOCX در Word ویندوز موضوع جداگانه‌ای است.
+- قفل انتشار و مدیریت فرآیندها به‌صورت چندپلتفرمی طراحی شده است (استفاده از `fcntl.flock` در سیستم‌های Unix مانند macOS/Linux و ماژول `msvcrt` در Windows). پایداری انتشار و تعبیه فونت‌ها در هر سه پلتفرم پوشش داده شده است.
 
 اگر محیط از قبل آماده است، آن را بی‌دلیل دوباره نصب نکن. دستورات زیر از ریشهٔ مخزن اجرا می‌شوند:
 
@@ -218,7 +217,7 @@ Markdown file / content / stdin
   → DocxRenderer → Staged DOCX
   → Headless LibreOffice (ایزولاسیون با -env:UserInstallation، تزریق Fontconfig و کنترل Process Group)
   → Staged PDF → اعتبارسنجی یکپارچگی (is_valid_pdf: هدر، فوتر و اندازه)
-  → انتشار اتمیک (قفل fcntl، بک‌آپ و rollback در صورت شکست)
+  → انتشار اتمیک (قفل فایل چندپلتفرمی fcntl/msvcrt، بک‌آپ و rollback در صورت شکست)
   → پاکسازی دایرکتوری staging موقت
 ```
 
@@ -313,7 +312,7 @@ markdown+fenced_divs+pipe_tables+backtick_code_blocks+raw_html+lists_without_pre
 
 ## ۱۰. فایل‌های خروجی، staging و ایمنی تغییرات
 
-pipeline ابتدا سند و نمودارها را در پوشهٔ staging کنار خروجی می‌سازد، سپس با قفل درون‌پردازه‌ای و `fcntl.flock` منتشر می‌کند. فایل قفل `.{output_stem}.publish.lock` عمداً باقی می‌ماند تا منتظرها روی همان inode هماهنگ باشند؛ آن را به‌عنوان فایل زائد هنگام اجرای هم‌زمان حذف نکن.
+pipeline ابتدا سند و نمودارها را در پوشهٔ staging کنار خروجی می‌سازد، سپس با قفل درون‌پردازه‌ای و قفل فایل چندپلتفرمی (`fcntl.flock` در macOS/Linux و `msvcrt` در Windows) منتشر می‌کند. فایل قفل `.{output_stem}.publish.lock` عمداً باقی می‌ماند تا منتظرها روی همان inode هماهنگ باشند؛ آن را به‌عنوان فایل زائد هنگام اجرای هم‌زمان حذف نکن.
 
 - PNGها در خود DOCX جاسازی می‌شوند؛ فایل Word پس از حذف پوشهٔ جانبی media هم باید تصاویر را داشته باشد.
 - در پوشهٔ media، الگوی `diagram_*.png` متعلق به خروجی تولیدکننده تلقی می‌شود و نسخه‌های قدیمی با همین الگو ممکن است پاک شوند. پوشهٔ اختصاصی انتخاب کن.

@@ -319,7 +319,7 @@ Detailed reports are generated under `artifacts/persian-layout/run_<timestamp>/`
 - **File Formats**: Official outputs are Word documents (`.docx`) and publication-ready PDFs (`.pdf`). Legacy binary Word 97-2003 `.doc` is rejected with exit code 2.
 - **PDF Engine**: PDF generation uses headless LibreOffice (`soffice`) with isolated temporary user profiles, robust process group management, font directory injection, and output integrity validation.
 - **Input Size Cap**: Maximum supported input size is 20 MB (`MAX_INPUT_SIZE_BYTES = 20 * 1024 * 1024`).
-- **Concurrent Publishing**: File write locks are serialized with stable POSIX `fcntl.flock` (`.{stem}.publish.lock` and `.{stem}.pdf.publish.lock`).
+- **Concurrent Publishing**: File write locks are serialized with cross-platform inter-process locks (`fcntl.flock` on macOS/Linux and `msvcrt` on Windows) via `.{stem}.publish.lock` and `.{stem}.pdf.publish.lock`.
 - **Remote Images**: Remote `http://`, `https://`, and `data:` URIs are rejected in v1; reference local images relative to your Markdown file.
 - **Word Shell Contract**: A custom `shell.docx` must contain exactly one section.
 - **Font Fallback**: Recipient systems without Vazirmatn will automatically fall back to their system default Arabic/Persian font. TrueType fonts can optionally be embedded using `--embed-fonts`.

@@ -389,3 +389,35 @@ def test_effective_mermaid_css_dynamic_font(tmp_path):
     assert "Sahel" in css_content
 
 
+def test_process_file_lock_posix(tmp_path):
+    from md_to_docx.mermaid import _ProcessFileLock
+
+    lock_file = tmp_path / "test_mermaid.lock"
+    with _ProcessFileLock(lock_file) as lock:
+        assert lock._fd is not None or not hasattr(os, "fork")
+    assert lock._fd is None
+
+
+def test_process_file_lock_windows_simulation(tmp_path, monkeypatch):
+    import sys
+    from unittest.mock import MagicMock
+    from md_to_docx.mermaid import _ProcessFileLock
+
+    mock_msvcrt = MagicMock()
+    mock_msvcrt.LK_LOCK = 1
+    mock_msvcrt.LK_UNLCK = 2
+    monkeypatch.setattr("os.name", "nt")
+    monkeypatch.setitem(sys.modules, "msvcrt", mock_msvcrt)
+
+    lock_file = tmp_path / "test_mermaid_win.lock"
+    with _ProcessFileLock(lock_file) as lock:
+        assert lock._fd is not None
+        assert mock_msvcrt.locking.call_count == 1
+        assert mock_msvcrt.locking.call_args_list[0][0][1] == mock_msvcrt.LK_LOCK
+
+    assert lock._fd is None
+    assert mock_msvcrt.locking.call_count == 2
+    assert mock_msvcrt.locking.call_args_list[1][0][1] == mock_msvcrt.LK_UNLCK
+
+
+
