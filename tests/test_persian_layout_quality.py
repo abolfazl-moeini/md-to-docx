@@ -749,8 +749,8 @@ dir: rtl
 این یک پاراگراف بدنه به زبان فارسی است که باید تراز دوطرفه (both) داشته باشد.
 """
     out_docx = tmp_path / "justified_both.docx"
-    # purple_book has page.paragraph_align: both
-    convert_markdown_to_docx(content=md, output_path=out_docx, template="purple_book", overwrite=True)
+    # finilize.v3.md Section 1.2: purple_book now defaults to start; explicit text_align="both" restores justified text.
+    convert_markdown_to_docx(content=md, output_path=out_docx, template="purple_book", text_align="both", overwrite=True)
 
     with zipfile.ZipFile(out_docx) as z:
         root = ET.fromstring(z.read("word/document.xml"))
@@ -862,7 +862,8 @@ dir: rtl
     header_docx = tmp_path / "header_leak.docx"
     with zipfile.ZipFile(clean_docx, "r") as zin, zipfile.ZipFile(header_docx, "w") as zout:
         for item in zin.infolist():
-            zout.writestr(item, zin.read(item.filename))
+            if item.filename != "word/header1.xml":
+                zout.writestr(item, zin.read(item.filename))
         zout.writestr(
             "word/header1.xml",
             b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'

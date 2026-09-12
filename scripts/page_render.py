@@ -10,35 +10,22 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 
+from md_to_docx.pdf import (
+    find_soffice_binary,
+    is_valid_pdf,
+    convert_docx_to_pdf,
+    LibreOfficeNotFoundError,
+)
+from md_to_docx.mermaid import ConvertError
+
+
 def find_soffice() -> Optional[str]:
-    env = os.environ.get("MD2DOCX_SOFFICE")
-    if env and Path(env).is_file():
-        return env
-    for name in ("soffice", "libreoffice"):
-        found = shutil.which(name)
-        if found:
-            return found
-    mac = Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")
-    if mac.is_file():
-        return str(mac)
-    return None
+    found = find_soffice_binary()
+    return str(found) if found else None
 
 
 def _is_valid_pdf(path: Path) -> bool:
-    if not path.is_file() or path.stat().st_size < 32:
-        return False
-    try:
-        with open(path, "rb") as f:
-            header = f.read(1024)
-            if not header.startswith(b"%PDF-"):
-                return False
-            f.seek(max(0, path.stat().st_size - 1024))
-            footer = f.read(1024)
-            if b"%%EOF" not in footer and b"startxref" not in footer and b"xref" not in footer:
-                return False
-        return True
-    except OSError:
-        return False
+    return is_valid_pdf(path, min_size=32)
 
 
 def _is_valid_png(path: Path) -> bool:
@@ -67,17 +54,23 @@ def render_docx_to_pdf(docx_path: Path, out_dir: Path, timeout: int = 120) -> Tu
 
     start_time = time.time()
     try:
-        proc = subprocess.run(
-            [soffice, "--headless", "--norestore", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)],
-            capture_output=True,
-            text=True,
+        convert_docx_to_pdf(
+            docx_path=docx_path,
+            output_pdf_path=pdf,
             timeout=timeout,
+            overwrite=True,
+            soffice_binary=soffice,
+            min_size=32,
         )
-    except subprocess.TimeoutExpired:
-        return False, "soffice timeout"
-
-    if proc.returncode != 0:
-        return False, proc.stderr.strip() or f"soffice exit {proc.returncode}"
+    except LibreOfficeNotFoundError:
+        return False, "soffice absent"
+    except ConvertError as e:
+        msg = str(e)
+        if "timed out" in msg.lower():
+            return False, "soffice timeout"
+        return False, msg
+    except Exception as e:
+        return False, str(e)
 
     # Verify that a fresh, valid, non-empty PDF was produced in this run
     if not pdf.exists():

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import shutil
@@ -7,8 +8,11 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 try:
     import fcntl
@@ -583,9 +587,9 @@ _MERMAID_OVERFLOW_CSS = (
 )
 
 
-def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]:
+def _effective_mermaid_css(template: Template, work_dir: Path, options: Optional[Any] = None) -> Optional[Path]:
     """Builds CSS with an absolute @font-face so Chromium can load the configured font."""
-    body_font = template.fonts.get("body", "Vazirmatn")
+    body_font = getattr(options, "font_family", None) or template.fonts.get("body", "Vazirmatn")
     font_file = None
     font_rel = template.font_files.get(body_font)
     if font_rel:
@@ -596,6 +600,9 @@ def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]
     if (not font_file or not font_file.exists()) and body_font == "Vazirmatn":
         vazir = template.dir_path / "fonts" / "Vazirmatn-Regular.ttf"
         font_file = vazir if vazir.exists() else None
+
+    if not font_file or not font_file.exists():
+        logger.warning("Mermaid: font file for '%s' not found; Chromium will fall back to system font", body_font)
 
     base_css = ""
     if template.mermaid_css_path and template.mermaid_css_path.exists():
@@ -612,9 +619,13 @@ def _effective_mermaid_css(template: Template, work_dir: Path) -> Optional[Path]
             "  font-style: normal;\n"
             "}\n"
         )
-        bold_rel = template.font_files.get(f"{body_font}-Bold") or template.font_files.get("Vazirmatn-Bold")
-        bold_file = (template.dir_path / bold_rel) if bold_rel else template.dir_path / "fonts" / f"{body_font}-Bold.ttf"
-        if bold_file.exists():
+        bold_rel = template.font_files.get(f"{body_font}-Bold") or (
+            template.font_files.get("Vazirmatn-Bold") if body_font == "Vazirmatn" else None
+        )
+        bold_file = (template.dir_path / bold_rel) if (bold_rel and template.dir_path) else (
+            (template.dir_path / "fonts" / f"{body_font}-Bold.ttf") if template.dir_path else None
+        )
+        if bold_file and bold_file.exists():
             css_parts.append(
                 "@font-face {\n"
                 f"  font-family: '{body_font}';\n"
@@ -674,6 +685,7 @@ def _run_mmdc(
     template: Template,
     timeout: float,
     browser_bin: Optional[str],
+    options: Optional[Any] = None,
 ) -> Path:
     """Single mmdc invocation against one browser binary."""
     mmdc_cmd = _find_mmdc_cmd()
@@ -695,7 +707,7 @@ def _run_mmdc(
         if template.mermaid_theme_path and template.mermaid_theme_path.exists():
             cmd.extend(["-c", str(template.mermaid_theme_path)])
 
-        css_path = _effective_mermaid_css(template, work_dir)
+        css_path = _effective_mermaid_css(template, work_dir, options=options)
         if css_path:
             cmd.extend(["-C", str(css_path)])
 
@@ -950,6 +962,7 @@ def render_mermaid_to_png(
     template: Template,
     timeout: float = MERMAID_TIMEOUT_SECONDS,
     browser_bin: Optional[str] = None,
+    options: Optional[Any] = None,
 ) -> Path:
     """
     Renders Mermaid code into a PNG image using mermaid-cli (mmdc).
@@ -979,7 +992,7 @@ def render_mermaid_to_png(
                 if blocked:
                     raise ConvertError(f"Mermaid launch blocked after previous failure: {blocked}")
                 try:
-                    result = _run_mmdc(mmd_code, output_path, template, timeout, candidate)
+                    result = _run_mmdc(mmd_code, output_path, template, timeout, candidate, options=options)
                     record_launch_success(candidate)
                     return result
                 except ConvertError as e:
@@ -1067,7 +1080,8 @@ def process_mermaid_ast(
     ast_dict: dict,
     output_dir: Path,
     template: Template,
-    render_fn: Optional[Callable[[str, Path, Template], Path]] = None,
+    render_fn: Optional[Callable] = None,
+    options: Optional[Any] = None,
 ) -> int:
     """
     Replace Pandoc CodeBlock nodes with class mermaid by rendered PNG Image nodes.
@@ -1140,7 +1154,10 @@ def process_mermaid_ast(
                 code = c[1] if isinstance(c, list) and len(c) > 1 else ""
                 counter["n"] += 1
                 img_path = output_dir / f"diagram_{counter['n']:03d}.png"
-                render(code, img_path, template)
+                try:
+                    render(code, img_path, template, options=options)
+                except TypeError:
+                    render(code, img_path, template)
                 svg_path = img_path.with_suffix(".svg")
                 if render_fn is None:
                     if not svg_path.is_file() or svg_path.stat().st_size == 0:

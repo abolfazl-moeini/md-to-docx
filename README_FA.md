@@ -4,9 +4,9 @@
   <b>فارسی</b> | <a href="README.md"><b>English Version</b></a>
 </p>
 
-**مبدل متون فنی Markdown دو زبانه (فارسی و انگلیسی) + نمودارهای Mermaid به اسناد رسمی Word (.docx)**
+**مبدل متون فنی Markdown دو زبانه (فارسی و انگلیسی) + نمودارهای Mermaid به اسناد رسمی Word (.docx) و PDF (.pdf)**
 
-این ابزار مستندات متنی Markdown را به اسناد حرفه‌ای Word با استایل اداری تبدیل می‌کند: متن راست‌به‌چپ (RTL)، جداسازی خودکار عبارات ترکیبی فارسی و انگلیسی، بج‌های شماره‌گذاری‌شدهٔ عناوین، کادرهای هشدار و نکته (Callouts)، جداول استاندارد راست‌به‌چپ، بلوک‌های کد چپ‌چین با رنگ‌آمیزی ساختاری (Syntax Highlighting)، و نمودارهای شفاف و باکیفیت Mermaid.
+این ابزار مستندات متنی Markdown را به اسناد حرفه‌ای Word و فایل‌های آمادهٔ چاپ PDF با استایل اداری تبدیل می‌کند: متن راست‌به‌چپ (RTL)، جداسازی خودکار عبارات ترکیبی فارسی و انگلیسی، بج‌های شماره‌گذاری‌شدهٔ عناوین، کادرهای هشدار و نکته (Callouts)، جداول استاندارد راست‌به‌چپ، بلوک‌های کد چپ‌چین با رنگ‌آمیزی ساختاری (Syntax Highlighting)، و نمودارهای شفاف و باکیفیت Mermaid.
 
 <p align="center">
   <img src="sample-template/1.jpg" alt="نمونه خروجی سند Word: بج‌های عناوین، نمودار Mermaid، کادر نکته" width="100%">
@@ -19,7 +19,7 @@
 
 ## TL;DR — راهنمای راه‌اندازی و تبدیل سریع
 
-خلاصهٔ جریان تبدیل: **قالب (Template) + فایل یا متن مستقیم (Markdown Content / File) → فایل سند Word (.docx)**
+خلاصهٔ جریان تبدیل: **قالب (Template) + فایل یا متن مستقیم (Markdown Content / File) → سند Word (.docx) یا سند PDF (.pdf)**
 
 ### ۱. راه‌اندازی و نصب پیش‌نیازها (فقط یک‌بار)
 
@@ -31,19 +31,25 @@ source .venv/bin/activate
 ### ۲. تبدیل سریع از طریق خط فرمان (CLI)
 
 ```bash
-# الف) ورودی از طریق فایل Markdown:
+# الف) تبدیل فایل Markdown به سند Word (.docx):
 md2docx convert input.md -o output.docx --template purple_book
 
-# ب) ورودی مستقیم از طریق پایپ متن (Standard Input):
+# ب) تبدیل مستقیم فایل Markdown به سند PDF (.pdf) از طریق LibreOffice Headless:
+md2docx convert input.md -o output.pdf --template purple_book
+
+# ج) ورودی مستقیم از طریق پایپ متن (Standard Input):
 echo "# عنوان سند\n\nمتن نمونه برای تبدیل." | md2docx convert - -o output.docx --template purple_book
+
+# د) تبدیل فایل DOCX موجود به PDF:
+md2docx to-pdf input.docx -o output.pdf
 ```
 
 ### ۳. استفاده از کتابخانه در پایتون (Python API)
 
 ```python
-from md_to_docx import convert_markdown_to_docx
+from md_to_docx import convert_markdown_to_docx, convert_markdown_to_pdf, convert_docx_to_pdf
 
-# حالت اول: ورودی فایل Markdown
+# تبدیل Markdown به سند Word (.docx)
 convert_markdown_to_docx(
     input_path="document.md",
     output_path="output.docx",
@@ -51,13 +57,17 @@ convert_markdown_to_docx(
     overwrite=True,
 )
 
-# حالت دوم: ورودی مستقیم متن رشته‌ای Markdown
-convert_markdown_to_docx(
-    content="# عنوان سند\n\nتوضیحات، جداول و نمودارهای متنی مارک‌داون...",
-    output_path="output.docx",
+# تبدیل مستقیم Markdown به PDF (.pdf) با استفاده از LibreOffice Headless
+convert_markdown_to_pdf(
+    input_path="document.md",
+    output_path="output.pdf",
     template="purple_book",
     overwrite=True,
+    keep_docx=False,  # در صورت True، فایل میانی output.docx نیز حفظ می‌شود
 )
+
+# تبدیل فایل DOCX موجود به PDF
+convert_docx_to_pdf("output.docx", "output.pdf", overwrite=True)
 ```
 
 | مؤلفه | نوع | توضیحات |
@@ -65,6 +75,7 @@ convert_markdown_to_docx(
 | **ورودی ۱: Template** | نام یا مسیر پوشه | تم پیش‌فرض `purple_book` یا هر پوشهٔ حاوی `config.yaml` با تنظیم رنگ‌ها، ابعاد صفحه، قلم‌ها و استایل‌ها |
 | **ورودی ۲: Markdown** | مسیر فایل یا متن رشته‌ای | فایل `.md` از طریق مسیر (`input_path`) یا متن مستقیم مارک‌داون (`content` در پایتون / stdin `-` در CLI) |
 | **خروجی: Word File** | فایل خروجی Word | سند رسمی با پسوند **`.docx`** (چینش کامل راست‌به‌چپ، قلم وزیرمتن، بج‌های عناوین، جداول و نمودارهای تعبیه‌شده) |
+| **خروجی: PDF File** | فایل خروجی PDF | سند نهایی با پسوند **`.pdf`** تولیدشده توسط موتور ایزولهٔ LibreOffice همراه با تزریق قلم و اعتبارسنجی یکپارچگی |
 
 ---
 
@@ -103,6 +114,7 @@ convert_markdown_to_docx(
 - **[Pandoc](https://pandoc.org) نسخه ۳ به بعد** (فقط برای پارس مارک‌داون)
 - **Node.js نسخه ۲۲.۱۲.۰ به بعد** (جهت اجرای mermaid-cli)
 - **گوگل کروم یا کرومیوم** (جهت رندر با Puppeteer)
+- **[LibreOffice](https://www.libreoffice.org)** (الزامی برای تبدیل PDF: دستور `brew install --cask libreoffice` در مک، `sudo apt install libreoffice` در اوبونتو/دبیان، `sudo dnf install libreoffice` در فدورا؛ یا تنظیم متغیر محیطی `MD2DOCX_SOFFICE`)
 
 > [!TIP]
 > برای نمایش صحیح قلم‌ها در رایانهٔ مقصد، فونت [وزیرمتن (Vazirmatn)](https://github.com/rastikerdar/vazirmatn) را روی سیستم مقصد نصب کنید.
@@ -122,6 +134,7 @@ convert_markdown_to_docx(
 ```bash
 # در مک:
 brew install pandoc
+brew install --cask libreoffice    # الزامی برای خروجی PDF
 
 python3.11 -m venv .venv
 source .venv/bin/activate
@@ -134,9 +147,23 @@ npx puppeteer browsers install chrome-headless-shell
 
 ## دستورات خط فرمان (CLI)
 
+### دستورات اصلی تبدیل
+
 ```bash
-# تبدیل عادی فایل مارک‌داون
+# تبدیل Markdown به سند Word (.docx)
 md2docx convert chapter.md -o chapter.docx
+
+# تبدیل مستقیم Markdown به PDF (.pdf) با LibreOffice
+md2docx convert chapter.md -o chapter.pdf
+
+# تبدیل Markdown به PDF همراه با ذخیره فایل میانی DOCX
+md2docx convert chapter.md -o chapter.pdf --keep-docx
+
+# تبدیل Markdown به PDF با مهلت زمانی سفارشی (پیش‌فرض: ۱۲۰ ثانیه)
+md2docx convert chapter.md -o chapter.pdf --pdf-timeout 180
+
+# تبدیل فایل DOCX موجود به PDF
+md2docx to-pdf chapter.docx -o chapter.pdf --pdf-timeout 120
 
 # رونویسی صریح فایل موجود با پرچم --overwrite
 md2docx convert chapter.md -o chapter.docx --overwrite
@@ -153,10 +180,36 @@ md2docx templates validate purple_book
 md2docx to-md chapter.docx -o chapter.md
 ```
 
-- برای تبدیل معکوس DOCX به Markdown از دستور `md2docx to-md` استفاده می‌شود.
-- اگر پرچم `-o` داده نشود، خروجی با همان نام ورودی و پسوند `.docx` ساخته می‌شود.
-- فرمت قدیمی `.doc` پشتیبانی نمی‌شود و با پیام خطا متوقف می‌گردد.
-- نمودارهای Mermaid در کنار سند در پوشهٔ `{stem}_media` ذخیره می‌شوند و تمام تصاویر در خود فایل Word نیز embed می‌شوند تا سند به طور مستقل باز شود.
+### گزینه‌ها و فلگ‌های خط فرمان (CLI)
+
+#### گزینه‌ها و فلگ‌های دستور `convert`
+
+دستور `convert` برای تبدیل Markdown به سند Word یا PDF با امکانات کامل کنترل چیدمان و تایپوگرافی استفاده می‌شود:
+
+| فلگ | شرح | مقادیر / پیش‌فرض |
+| :--- | :--- | :--- |
+| `-o, --output` | مسیر فایل خروجی (`.docx` یا `.pdf`) | پیش‌فرض: `{input}.docx` |
+| `-t, --template` | نام یا مسیر پوشهٔ قالب | پیش‌فرض: `purple_book` |
+| `-f, --overwrite` | رونویسی روی فایل موجود در صورت وجود | `False` |
+| `--keep-docx` | نگهداری فایل میانی DOCX هنگام تولید PDF | `False` |
+| `--pdf-timeout` | مهلت زمانی اجرای LibreOffice بر حسب ثانیه | `120` |
+| `--direction, --dir` | جهت متن سند | `auto` (پیش‌فرض با تشخیص هوشمند متن)، `rtl`، `ltr` |
+| `--text-align, --align` | تراز متن پاراگراف‌های بدنه | `start` (راست‌چین آزاد)، `right`، `left`، `center`، `both` (تراز دوطرفه) |
+| `--font, --font-family` | قلم متن فارسی / بدنه | قلم قالب (پیش‌فرض `Vazirmatn`) |
+| `--heading-font` | قلم سفارشی عناوین | قلم عناوین در قالب |
+| `--latin-font` | قلم سفارشی بخش‌های لاتین | قلم لاتین قالب (`Segoe UI`) |
+| `--code-font` | قلم سفارشی بلوک‌ها و کدهای درون‌خطی | قلم کد قالب (`Courier New`) |
+| `--embed-fonts / --no-embed-fonts` | جاسازی فایل فونت TrueType در فایل DOCX | `--no-embed-fonts` |
+
+#### گزینه‌های دستور `to-pdf`
+
+دستور `to-pdf` برای تبدیل مستقیم یک فایل موجود `.docx` به فایل `.pdf` از طریق LibreOffice استفاده می‌شود:
+
+| فلگ | شرح | مقادیر / پیش‌فرض |
+| :--- | :--- | :--- |
+| `-o, --output` | مسیر فایل خروجی PDF | پیش‌فرض: `{input}.pdf` |
+| `-f, --overwrite` | رونویسی روی فایل خروجی موجود | `False` |
+| `--timeout, --pdf-timeout` | مهلت زمانی تبدیل LibreOffice بر حسب ثانیه | `120` |
 
 ---
 
@@ -193,7 +246,7 @@ md2docx to-md chapter.docx -o chapter.md
 
 | نام قالب | اندازه صفحه | تراز پاراگراف | توضیحات |
 | :--- | :--- | :--- | :--- |
-| `purple_book` | A4 | `both` (تراز دوطرفه) | قالب پیش‌فرض با تم بنفش، بج‌های تزئینی عناوین و تراز دوطرفه. |
+| `purple_book` | A4 | `start` (راست‌چین آزاد) | قالب پیش‌فرض با تم بنفش، بج‌های تزئینی عناوین، و لبهٔ راست‌چین آزاد برای تایپوگرافی بهینهٔ فارسی. |
 | `persian_book` | A4 | `start` (راست‌چین آزاد) | قالب کتاب فنی با شکست صفحه قبل از هر عنوان سطح ۱، سرصفحه/پاصفحهٔ خنثی، و انتهای آزاد برای حداکثر خوانایی متن فارسی. |
 | `persian_compact`| A5 | `start` (راست‌چین آزاد) | قالب کتابچهٔ فشرده با حاشیه‌های کم، مناسب قطع A5. |
 | `persian_report` | Letter | `start` (راست‌چین آزاد) | قالب گزارش سازمانی رسمی با عناوین پیوسته، لوگوی تعبیه‌شده در سربرگ و شماره صفحهٔ پویا در پاورقی. |
@@ -244,11 +297,12 @@ python scripts/matrix_runner.py --fixtures S01,S05,S11,B00
 
 ---
 
-## محدودیت‌ها و مشخصات عملیاتی (نسخهٔ ۱)
-
-- **پسوند خروجی**: خروجی رسمی سند فقط `.docx` است.
+## محدودیت‌ها و مشخصات عملیاتی
+ 
+- **پسوند خروجی**: خروجی رسمی سند فایل‌های Word با پسوند **`.docx`** و فایل‌های چاپی با پسوند **`.pdf`** است. فرمت قدیمی `.doc` پشتیبانی نمی‌شود و با خطای کد ۲ متوقف می‌گردد.
+- **موتور تبدیل PDF**: تولید PDF با استفاده از LibreOffice بدون سر (Headless) در محیط ایزوله، همراه با پروفایل موقت، مدیریت درخت پردازش‌ها و اعتبارسنجی ساختار خروجی صورت می‌پذیرد.
 - **اندازهٔ ورودی**: سقف اندازهٔ فایل ورودی ۲۰ مگابایت است.
-- **قفل هم‌زمانی**: انتشار سند نهایی با استفاده از قفل سیستمی پایدار (`fcntl.flock`) در برابر اجرای هم‌زمان محافظت می‌شود.
+- **قفل هم‌زمانی**: انتشار سند نهایی با استفاده از قفل سیستمی پایدار (`fcntl.flock`) بر روی فایل‌های `.{stem}.publish.lock` و `.{stem}.pdf.publish.lock` در برابر اجرای هم‌زمان محافظت می‌شود.
 - **تصاویر وب**: در نسخهٔ فعلی آدرس‌های اینترنتی مستقیم (`http/https`) پشتیبانی نمی‌شوند؛ فایل‌ها باید پیش از تبدیل به صورت محلی در کنار سند قرار گیرند.
 - **بخش‌های سند (Shell Sections)**: پوستهٔ سفارشی `shell.docx` باید تک‌سکشنی باشد.
-- **نصب فونت**: فونت‌ها در سند تعریف می‌شوند؛ سیستم بازکننده سند برای نمایش بدون جایگزینی نیاز به فونت وزیرمتن دارد.
+- **نصب فونت**: فونت‌ها در سند تعریف می‌شوند؛ سیستم بازکننده سند برای نمایش بدون جایگزینی نیاز به فونت وزیرمتن دارد، یا می‌توانید با گزینهٔ `--embed-fonts` فونت را در فایل تعبیه نمایید.

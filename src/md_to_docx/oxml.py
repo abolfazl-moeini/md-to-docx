@@ -85,9 +85,11 @@ def set_run_cs_font(
     if rFonts is None:
         rFonts = OxmlElement("w:rFonts")
         rPr.append(rFonts)
+    effective_cs = cs_font_name or font_name
     rFonts.set(qn("w:ascii"), font_name)
     rFonts.set(qn("w:hAnsi"), font_name)
-    rFonts.set(qn("w:cs"), cs_font_name or font_name)
+    rFonts.set(qn("w:cs"), effective_cs)
+    rFonts.set(qn("w:eastAsia"), effective_cs)
 
     # Sizes in half-points (1 pt = 2 half-points)
     sz_val = str(int(round(size_pt * 2)))
@@ -168,6 +170,16 @@ def set_run_rtl(run: Run, rtl: bool = True) -> None:
         existing = OxmlElement("w:rtl")
         rPr.append(existing)
     existing.set(qn("w:val"), "1" if rtl else "0")
+
+
+def set_run_cs(run: Run, cs: bool = True) -> None:
+    """Sets <w:cs w:val="1|0"/> on run properties to explicitly designate complex script."""
+    rPr = run._r.get_or_add_rPr()
+    existing = rPr.find(qn("w:cs"))
+    if existing is None:
+        existing = OxmlElement("w:cs")
+        rPr.append(existing)
+    existing.set(qn("w:val"), "1" if cs else "0")
 
 
 def set_table_bidi_visual(table: Table) -> None:

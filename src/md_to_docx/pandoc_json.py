@@ -328,7 +328,7 @@ def emit_inlines(
         elif t == "Quoted":
             qtype = c[0].get("t") if isinstance(c, list) and c and isinstance(c[0], dict) else "DoubleQuote"
             inner = c[1] if isinstance(c, list) and len(c) > 1 and isinstance(c[1], list) else []
-            if renderer.template.direction == "rtl":
+            if renderer.effective_direction == "rtl":
                 left, right = ("«", "»") if qtype != "SingleQuote" else ("‹", "›")
             else:
                 left, right = ("\u201c", "\u201d") if qtype != "SingleQuote" else ("\u2018", "\u2019")
@@ -747,6 +747,11 @@ ALIGN_MAP = {
 }
 
 
+def _map_alignment(align_str: str) -> str:
+    return ALIGN_MAP.get(align_str, "default")
+
+
+
 def render_ast_table(
     table_c: List[Any],
     renderer: DocxRenderer,
@@ -820,7 +825,7 @@ def render_ast_table(
             break
 
     is_rtl_table = (
-        renderer.template.direction == "rtl"
+        renderer.effective_direction == "rtl"
         and (has_persian or renderer.template.tables.get("bidi_visual", True))
     )
     if not has_persian:
@@ -850,28 +855,30 @@ def render_ast_table(
         else:
             default_indices.append(c_idx)
 
-    used_dxa = sum(explicit_widths.values())
-    rem_dxa = max(0, total_dxa - used_dxa)
+    allocated_dxa = sum(explicit_widths.values())
+    remaining_dxa = max(0, total_dxa - allocated_dxa)
     if default_indices:
-        def_width = max(min_col_dxa, rem_dxa // len(default_indices))
-        widths_dxa = [explicit_widths.get(i, def_width) for i in range(num_cols)]
-    else:
-        widths_dxa = [explicit_widths.get(i, total_dxa // max(1, num_cols)) for i in range(num_cols)]
+        equal_dxa = max(min_col_dxa, remaining_dxa // len(default_indices))
+        for d_idx in default_indices:
+            explicit_widths[d_idx] = equal_dxa
 
-    diff = total_dxa - sum(widths_dxa)
-    if widths_dxa:
-        widths_dxa[-1] = max(min_col_dxa, widths_dxa[-1] + diff)
-
+    widths_dxa = [explicit_widths.get(i, min_col_dxa) for i in range(num_cols)]
     set_table_column_widths(tbl, widths_dxa)
 
     tbl_cfg = renderer.template.tables or {}
+    border_col = renderer._resolve_color(tbl_cfg.get("border_color", "primary_light"))
+    border_sz = int(tbl_cfg.get("border_sz", 4))
+    border_spec = {"val": "single", "sz": border_sz, "color": border_col, "space": 0}
+    subtle_hdr_border = {"val": "single", "sz": 4, "color": border_col, "space": 0}
+
+    # Render headers and body
+    num_head = len(head_rows)
+    align_spec = [_map_alignment(cs[0].get("t") if isinstance(cs, list) and cs and isinstance(cs[0], dict) else "AlignDefault") for cs in colspecs]
+
     primary_color = renderer._resolve_color(tbl_cfg.get("header_bg", "primary"))
     header_fg = renderer._resolve_color(tbl_cfg.get("header_fg", "on_primary"))
-    subtle_hdr_border = {"val": "single", "sz": 4, "color": "542380", "space": 0}
-    border_spec = {"val": "single", "sz": 4, "color": "D8D8D8", "space": 0}
 
     # Render header rows
-    num_head = len(head_rows)
     for h_idx, head_row in enumerate(head_rows):
         hdr_trPr = tbl.rows[h_idx]._tr.get_or_add_trPr()
         if hdr_trPr.find(qn("w:tblHeader")) is None:
@@ -920,7 +927,7 @@ def render_ast_table(
     # Optional caption
     if caption:
         p_cap = target.add_paragraph()
-        is_rtl_cap = contains_persian(caption) if renderer.template.direction == "rtl" else False
+        is_rtl_cap = contains_persian(caption) if renderer.effective_direction == "rtl" else False
         set_paragraph_bidi(p_cap, bidi=is_rtl_cap)
         set_paragraph_align(p_cap, "center")
         p_cap.paragraph_format.space_before = Pt(4)
@@ -965,7 +972,7 @@ def _resolve_list_rtl(
         return renderer.resolve_paragraph_bidi(combined)
     if parent_rtl is not None:
         return parent_rtl
-    return renderer.template.direction != "ltr"
+    return renderer.effective_direction != "ltr"
 
 
 def render_block(
@@ -1152,7 +1159,7 @@ def render_block(
 
             if container is not None:
                 p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
-                is_rtl = contains_persian(text) if renderer.template.direction == "rtl" else False
+                is_rtl = contains_persian(text) if renderer.effective_direction == "rtl" else False
                 set_paragraph_bidi(p, bidi=is_rtl)
                 if default_align in ("left", "right", "center"):
                     set_paragraph_align(p, default_align)
@@ -1180,7 +1187,7 @@ def render_block(
                 if b.get("t") in ("Para", "Plain"):
                     p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
                     txt = inlines_to_text(b.get("c", []))
-                    is_rtl = contains_persian(txt) if renderer.template.direction == "rtl" else False
+                    is_rtl = contains_persian(txt) if renderer.effective_direction == "rtl" else False
                     set_paragraph_bidi(p, bidi=is_rtl)
                     set_paragraph_align(p, renderer.paragraph_align)
                     quote_cfg = renderer.template.quotes or {}
@@ -1393,7 +1400,7 @@ def render_block(
             if container is not None:
                 p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
                 txt = inlines_to_text(line)
-                is_rtl = contains_persian(txt) if renderer.template.direction == "rtl" else False
+                is_rtl = contains_persian(txt) if renderer.effective_direction == "rtl" else False
                 set_paragraph_bidi(p, bidi=is_rtl)
                 set_paragraph_align(p, "start")
                 emit_inlines(line, renderer, p, font_size_pt=_inline_size(renderer))
@@ -1451,6 +1458,95 @@ SUPPORTED_PANDOC_API_MAJORS = {1}
 SUPPORTED_PANDOC_API_MINORS = {22, 23}
 
 
+def detect_narrative_direction(ast_dict: Dict[str, Any]) -> Optional[str]:
+    """Counts strong Unicode characters (R/AL vs L) in narrative text according to finilize.v3.md Section 1.1.
+    Narrative text includes prose, headings, lists, table cells, definition lists, blockquotes.
+    Excludes CodeBlock, Math, RawBlock/RawInline, Link/Image target URLs, and Mermaid sources.
+    """
+    import unicodedata
+
+    text_parts: List[str] = []
+
+    def collect_inlines(inlines: Any) -> None:
+        if not isinstance(inlines, list):
+            return
+        for inl in inlines:
+            if not isinstance(inl, dict):
+                continue
+            t = inl.get("t")
+            c = inl.get("c")
+            if t == "Str" and isinstance(c, str):
+                text_parts.append(c)
+            elif t in ("Space", "SoftBreak"):
+                text_parts.append(" ")
+            elif t in ("Emph", "Strong", "Strikeout", "Superscript", "Subscript", "Underline", "SmallCaps"):
+                collect_inlines(c)
+            elif t == "Quoted" and isinstance(c, list) and len(c) > 1:
+                collect_inlines(c[1])
+            elif t in ("Link", "Span") and isinstance(c, list):
+                if len(c) > 1 and isinstance(c[1], list):
+                    collect_inlines(c[1])
+                elif len(c) > 0 and isinstance(c[0], list):
+                    collect_inlines(c[0])
+
+    def collect_blocks(blocks: Any) -> None:
+        if not isinstance(blocks, list):
+            return
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            t = b.get("t")
+            c = b.get("c")
+            if t in ("Para", "Plain"):
+                collect_inlines(c)
+            elif t == "Header" and isinstance(c, list) and len(c) > 2:
+                collect_inlines(c[2])
+            elif t == "BlockQuote":
+                collect_blocks(c)
+            elif t == "OrderedList" and isinstance(c, list) and len(c) > 1 and isinstance(c[1], list):
+                for item in c[1]:
+                    collect_blocks(item)
+            elif t == "BulletList" and isinstance(c, list):
+                for item in c:
+                    collect_blocks(item)
+            elif t == "DefinitionList" and isinstance(c, list):
+                for term_def in c:
+                    if isinstance(term_def, list) and len(term_def) == 2:
+                        collect_inlines(term_def[0])
+                        for def_blocks in term_def[1]:
+                            collect_blocks(def_blocks)
+            elif t == "Div" and isinstance(c, list) and len(c) > 1:
+                collect_blocks(c[1])
+            elif t == "Table" and isinstance(c, list):
+                try:
+                    if len(c) > 3 and isinstance(c[3], list) and len(c[3]) > 1:
+                        for row in c[3][1]:
+                            for cell in row[1]:
+                                collect_blocks(cell[4] if len(cell) > 4 else cell)
+                    if len(c) > 4 and isinstance(c[4], list):
+                        for tbody in c[4]:
+                            if isinstance(tbody, list) and len(tbody) > 4:
+                                for row in tbody[4]:
+                                    for cell in row[1]:
+                                        collect_blocks(cell[4] if len(cell) > 4 else cell)
+                except Exception:
+                    pass
+
+    collect_blocks(ast_dict.get("blocks", []))
+    all_text = "".join(text_parts)
+    if not all_text:
+        return None
+
+    rtl_count = sum(1 for ch in all_text if unicodedata.bidirectional(ch) in ("R", "AL"))
+    ltr_count = sum(1 for ch in all_text if unicodedata.bidirectional(ch) == "L")
+
+    if rtl_count > ltr_count:
+        return "rtl"
+    if ltr_count > rtl_count:
+        return "ltr"
+    return None
+
+
 def ast_to_docx(ast_dict: Dict[str, Any], renderer: DocxRenderer) -> Document:
     """Translates a full Pandoc AST dictionary into elements in a DOCX Document."""
     api_version = ast_dict.get("pandoc-api-version")
@@ -1502,9 +1598,37 @@ def ast_to_docx(ast_dict: Dict[str, Any], renderer: DocxRenderer) -> Document:
                 return ""
         return str(node)
 
-    dir_val = _meta_text(meta.get("dir") or meta.get("direction")).strip().lower()
-    if dir_val in ("ltr", "rtl"):
-        renderer.content_direction = dir_val
+    dir_node = meta.get("dir")
+    direction_node = meta.get("direction")
+    dir_val = _meta_text(dir_node).strip().lower() if dir_node is not None else ""
+    direction_val = _meta_text(direction_node).strip().lower() if direction_node is not None else ""
+    if dir_val and direction_val and dir_val != direction_val:
+        renderer.record_warning(
+            f"Conflicting direction metadata: dir='{dir_val}' vs direction='{direction_val}'",
+            code="W06",
+            identity="metadata",
+        )
+    effective_meta_dir = dir_val or direction_val
+
+    lang_node = meta.get("lang")
+    language_node = meta.get("language")
+    lang_val = _meta_text(lang_node).strip().lower() if lang_node is not None else ""
+    language_val = _meta_text(language_node).strip().lower() if language_node is not None else ""
+    if lang_val and language_val and lang_val != language_val:
+        renderer.record_warning(
+            f"Conflicting language metadata: lang='{lang_val}' vs language='{language_val}'",
+            code="W07",
+            identity="metadata",
+        )
+    effective_meta_lang = lang_val or language_val
+
+    narrative_dir = detect_narrative_direction(ast_dict)
+
+    renderer.set_content_direction(
+        dir_val=effective_meta_dir if effective_meta_dir in ("ltr", "rtl") else None,
+        lang_val=effective_meta_lang if effective_meta_lang else None,
+        narrative_dir=narrative_dir,
+    )
     toc_val = _meta_text(meta.get("toc")).strip().lower()
     if toc_val in ("true", "yes", "1"):
         renderer.insert_toc_field()
@@ -1513,3 +1637,4 @@ def ast_to_docx(ast_dict: Dict[str, Any], renderer: DocxRenderer) -> Document:
     for idx, block in enumerate(blocks):
         render_block(block, renderer, container=None, path=f"root.blocks[{idx}]")
     return renderer.doc
+

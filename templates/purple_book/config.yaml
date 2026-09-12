@@ -18,7 +18,7 @@ page:
     bottom: 2.0
     left: 2.0
     right: 2.0
-  paragraph_align: both
+  paragraph_align: start
   space_after_pt: 6.0
 colors:
   primary: 6B2FA0

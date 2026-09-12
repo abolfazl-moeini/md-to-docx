@@ -19,6 +19,7 @@ EXPECTED_CONTENT_TYPES = {
     "word/styles.xml": "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
     "word/numbering.xml": "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
     "word/settings.xml": "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml",
+    "word/fontTable.xml": "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml",
 }
 
 
@@ -176,10 +177,14 @@ def run_package_oracle(docx_path: Path) -> Tuple[bool, List[str]]:
                 except ET.ParseError:
                     pass
 
-            # 5. Check orphan media
+            # 5. Check orphan media and fonts
             for media in [n for n in names if n.startswith("word/media/")]:
                 if media not in referenced_parts:
                     issues.append(f"Orphan media part '{media}' is not referenced by any relationship")
+
+            for font_part in [n for n in names if n.startswith("word/fonts/")]:
+                if font_part not in referenced_parts:
+                    issues.append(f"Orphan font part '{font_part}' is not referenced by any relationship")
 
     except zipfile.BadZipFile as e:
         return False, [f"Corrupt ZIP: {e}"]

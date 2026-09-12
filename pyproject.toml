@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "md-to-docx"
-version = "0.1.0"
+version = "0.2.0"
 description = "Persian / RTL Markdown + Mermaid to DOCX converter with custom templates"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,8 +36,10 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+pythonpath = ["."]
 markers = [
     "mermaid: tests that run actual mmdc / mermaid-cli",
     "pandoc: tests that run actual pandoc binary",
     "integration: end-to-end integration tests with external binaries",
+    "pdf: tests that require LibreOffice soffice binary",
 ]

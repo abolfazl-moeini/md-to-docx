@@ -4,9 +4,9 @@
   <a href="README_FA.md"><b>نسخه فارسی (Persian)</b></a> | <b>English</b>
 </p>
 
-**Bilingual Persian / RTL Markdown + Mermaid → Word (.docx)**
+**Bilingual Persian / RTL Markdown + Mermaid → Word (.docx) & PDF (.pdf)**
 
-Transform bilingual technical Markdown into styled Microsoft Word documents: right-to-left (RTL) body text, mixed Persian/English inline runs, numbered heading badges, styled callout boxes, RTL tables, syntax-highlighted code blocks, and crisp high-resolution Mermaid diagrams.
+Transform bilingual technical Markdown into styled Microsoft Word documents and publication-ready PDFs: right-to-left (RTL) body text, mixed Persian/English inline runs, numbered heading badges, styled callout boxes, RTL tables, syntax-highlighted code blocks, and crisp high-resolution Mermaid diagrams.
 
 <p align="center">
   <img src="sample-template/1.jpg" alt="Sample Word output: heading badges, Mermaid diagram, DBA note" width="100%">
@@ -19,7 +19,7 @@ Transform bilingual technical Markdown into styled Microsoft Word documents: rig
 
 ## TL;DR — Quick Start
 
-Conversion pipeline summary: **Template + Markdown (File or Content) → Word Document (.docx)**
+Conversion pipeline summary: **Template + Markdown (File or Content) → Word Document (.docx) or PDF (.pdf)**
 
 ### 1. One-Step Environment Setup (Once)
 
@@ -31,19 +31,25 @@ source .venv/bin/activate
 ### 2. Fast Command-Line (CLI) Conversion
 
 ```bash
-# Option A: Convert from a Markdown file
+# Option A: Convert from Markdown file to Word (.docx)
 md2docx convert input.md -o output.docx --template purple_book
 
-# Option B: Convert directly from standard input (pipe)
+# Option B: Convert directly to PDF (.pdf) via headless LibreOffice
+md2docx convert input.md -o output.pdf --template purple_book
+
+# Option C: Convert directly from standard input (pipe)
 echo "# Document Title\n\nSample Markdown text with RTL content." | md2docx convert - -o output.docx --template purple_book
+
+# Option D: Convert existing DOCX to PDF
+md2docx to-pdf input.docx -o output.pdf
 ```
 
 ### 3. Python API
 
 ```python
-from md_to_docx import convert_markdown_to_docx
+from md_to_docx import convert_markdown_to_docx, convert_markdown_to_pdf, convert_docx_to_pdf
 
-# Option A: Convert from a Markdown file
+# Convert Markdown to Word (.docx)
 convert_markdown_to_docx(
     input_path="document.md",
     output_path="output.docx",
@@ -51,13 +57,17 @@ convert_markdown_to_docx(
     overwrite=True,
 )
 
-# Option B: Convert directly from a Markdown string
-convert_markdown_to_docx(
-    content="# Document Title\n\nTechnical paragraphs, tables, and mermaid diagrams...",
-    output_path="output.docx",
+# Convert Markdown directly to PDF (.pdf) via headless LibreOffice
+convert_markdown_to_pdf(
+    input_path="document.md",
+    output_path="output.pdf",
     template="purple_book",
     overwrite=True,
+    keep_docx=False,  # Set True to preserve intermediate output.docx
 )
+
+# Convert existing DOCX to PDF
+convert_docx_to_pdf("output.docx", "output.pdf", overwrite=True)
 ```
 
 | Component | Type | Description |
@@ -65,6 +75,7 @@ convert_markdown_to_docx(
 | **Input 1: Template** | Theme name or folder path | Built-in theme (`purple_book`) or any directory containing `config.yaml` with color palettes, fonts, and geometry |
 | **Input 2: Markdown** | File path or string content | Markdown `.md` file path (`input_path`) or raw Markdown text (`content` in Python / `-` in CLI) |
 | **Output: Word File** | Word Document | Output file with **`.docx`** extension (full RTL layout, Vazirmatn font, heading badges, tables, and embedded diagrams) |
+| **Output: PDF File** | PDF Document | Output file with **`.pdf`** extension generated via headless LibreOffice with process isolation, dynamic font injection, and validation |
 
 ---
 
@@ -105,6 +116,7 @@ Also supports modern GitHub alerts (`> [!NOTE]`, `> [!WARNING]`), bullet and num
 - **[Pandoc](https://pandoc.org) 3.x** (used as AST parser only; it does not write the DOCX)
 - **Node.js >= 22.12.0** (required for `mermaid-cli`)
 - **Chrome / Chromium** (required for Puppeteer headless rendering)
+- **[LibreOffice](https://www.libreoffice.org)** (required for PDF conversion: `brew install --cask libreoffice` on macOS, `sudo apt install libreoffice` on Ubuntu/Debian, `sudo dnf install libreoffice` on Fedora; or set `MD2DOCX_SOFFICE` to your `soffice` binary path)
 
 > [!TIP]
 > For optimal viewing, install the [Vazirmatn](https://github.com/rastikerdar/vazirmatn) font on the client machine that will view the resulting Word file.
@@ -124,6 +136,7 @@ Or configure manually:
 ```bash
 # On macOS:
 brew install pandoc
+brew install --cask libreoffice    # Required for PDF conversion
 
 # Python environment setup
 python3.11 -m venv .venv
@@ -141,9 +154,23 @@ Installing the package puts the `md2docx` executable directly on your PATH.
 
 ## CLI Usage
 
+### Basic Conversion Commands
+
 ```bash
-# Basic conversion
+# Convert Markdown to Word (.docx)
 md2docx convert document.md -o document.docx
+
+# Convert Markdown directly to PDF (.pdf) via headless LibreOffice
+md2docx convert document.md -o document.pdf
+
+# Convert Markdown to PDF and keep intermediate DOCX
+md2docx convert document.md -o document.pdf --keep-docx
+
+# Convert Markdown to PDF with custom timeout (default: 120s)
+md2docx convert document.md -o document.pdf --pdf-timeout 180
+
+# Convert existing DOCX to PDF
+md2docx to-pdf document.docx -o document.pdf --pdf-timeout 120
 
 # Overwrite existing output explicitly
 md2docx convert document.md -o document.docx --overwrite
@@ -159,6 +186,37 @@ md2docx templates validate purple_book
 # Convert DOCX back to Markdown and extract media
 md2docx to-md document.docx -o document.md
 ```
+
+### CLI Options & Flags
+
+#### `md2docx convert` Options & Styling Flags
+
+The `convert` command handles Markdown to DOCX or PDF conversion with comprehensive layout and typography controls:
+
+| Flag | Description | Values / Default |
+| :--- | :--- | :--- |
+| `-o, --output` | Output file path (`.docx` or `.pdf`) | Defaults to `{input}.docx` |
+| `-t, --template` | Template name or directory path | Defaults to `purple_book` |
+| `-f, --overwrite` | Overwrite existing output file | `False` |
+| `--keep-docx` | Preserve intermediate DOCX when generating PDF | `False` |
+| `--pdf-timeout` | LibreOffice execution timeout in seconds | `120` |
+| `--direction, --dir` | Document text direction | `auto` (default), `rtl`, `ltr` |
+| `--text-align, --align` | Body paragraph text alignment | `start` (ragged-right), `right`, `left`, `center`, `both` (justified) |
+| `--font, --font-family` | Font family for body and complex script text | Defaults to template font (`Vazirmatn`) |
+| `--heading-font` | Font family override for headings | Defaults to template heading font |
+| `--latin-font` | Font family override for Latin text runs | Defaults to template latin font (`Segoe UI`) |
+| `--code-font` | Monospace code block and inline code font | Defaults to template code font (`Courier New`) |
+| `--embed-fonts / --no-embed-fonts` | Embed TrueType font files inside the DOCX package | `--no-embed-fonts` |
+
+#### `md2docx to-pdf` Options
+
+The `to-pdf` command converts an existing `.docx` file into a `.pdf` file via headless LibreOffice:
+
+| Flag | Description | Values / Default |
+| :--- | :--- | :--- |
+| `-o, --output` | Output PDF file path | Defaults to `{input}.pdf` |
+| `-f, --overwrite` | Overwrite existing output PDF file | `False` |
+| `--timeout, --pdf-timeout` | LibreOffice execution timeout in seconds | `120` |
 
 ### CLI Exit Codes
 
@@ -201,7 +259,7 @@ md2docx to-md document.docx -o document.md
 
 | Template | Page Size | Paragraph Alignment | Description |
 | :--- | :--- | :--- | :--- |
-| `purple_book` | A4 | `both` (justified) | Default theme with purple styling, decorative heading badges, and full justification. |
+| `purple_book` | A4 | `start` (ragged-right) | Default theme with purple styling, decorative heading badges, and ragged-right edge for optimal Persian typography. |
 | `persian_book` | A4 | `start` (ragged-right) | Technical Persian book layout with page breaks before H1, clean neutral headers/footers, and ragged-right edge for optimal Persian readability. |
 | `persian_compact`| A5 | `start` (ragged-right) | Pocket handbook layout with compact margins and page breaks before H1. |
 | `persian_report` | Letter | `start` (ragged-right) | Formal organizational report with continuous H1 headings, embedded emblem logo header, and dynamic PAGE field footer. |
@@ -256,11 +314,12 @@ Detailed reports are generated under `artifacts/persian-layout/run_<timestamp>/`
 
 ---
 
-## Operational Specifications & Limits (v1)
-
-- **File Formats**: Official output is `.docx`. Legacy binary Word 97-2003 `.doc` is rejected with exit code 2.
+## Operational Specifications & Limits
+ 
+- **File Formats**: Official outputs are Word documents (`.docx`) and publication-ready PDFs (`.pdf`). Legacy binary Word 97-2003 `.doc` is rejected with exit code 2.
+- **PDF Engine**: PDF generation uses headless LibreOffice (`soffice`) with isolated temporary user profiles, robust process group management, font directory injection, and output integrity validation.
 - **Input Size Cap**: Maximum supported input size is 20 MB (`MAX_INPUT_SIZE_BYTES = 20 * 1024 * 1024`).
-- **Concurrent Publishing**: File write locks are serialized with stable POSIX `fcntl.flock` (`.{stem}.publish.lock`).
+- **Concurrent Publishing**: File write locks are serialized with stable POSIX `fcntl.flock` (`.{stem}.publish.lock` and `.{stem}.pdf.publish.lock`).
 - **Remote Images**: Remote `http://`, `https://`, and `data:` URIs are rejected in v1; reference local images relative to your Markdown file.
 - **Word Shell Contract**: A custom `shell.docx` must contain exactly one section.
-- **Font Fallback**: Recipient systems without Vazirmatn will automatically fall back to their system default Arabic/Persian font.
+- **Font Fallback**: Recipient systems without Vazirmatn will automatically fall back to their system default Arabic/Persian font. TrueType fonts can optionally be embedded using `--embed-fonts`.

@@ -20,12 +20,20 @@ from md_to_docx.template import Template
 from md_to_docx.headings import HeadingInfo
 from md_to_docx.mermaid import ConvertError
 from md_to_docx.bidi import split_bidi_runs, ScriptType, contains_persian, is_pure_latin
+from md_to_docx.options import (
+    GeneratorOptions,
+    DEFAULT_FONT_FAMILY,
+    DEFAULT_LATIN_FONT,
+    DEFAULT_CODE_FONT,
+    resolve_effective_direction,
+)
 from md_to_docx.oxml import (
     word_safe_jc,
     set_paragraph_bidi,
     set_paragraph_align,
     set_run_cs_font,
     set_run_rtl,
+    set_run_cs,
     set_table_bidi_visual,
     set_cell_shading,
     set_cell_margins,
@@ -48,14 +56,21 @@ class DocxRenderer:
         doc: Optional[Document] = None,
         template: Optional[Template] = None,
         base_dir: Optional[Path] = None,
+        options: Optional[GeneratorOptions] = None,
     ):
         self.template = template or Template.load("purple_book")
         self.base_dir = Path(base_dir).resolve() if base_dir else None
+        self.options = options or GeneratorOptions()
+        self.warnings: List[str] = []
+        self.content_direction = None
+        self.content_lang = None
+        self._effective_direction = resolve_effective_direction(
+            self.options.direction, None, self.template.direction, None
+        )
         self._using_shell = False
         self._width_stack: List[float] = []
         self._footnote_seq = 0
         self._next_bookmark_id = 1
-        self.warnings: List[str] = []
         self.doc = doc if doc is not None else self._init_document()
         self._setup_page()
 
@@ -125,22 +140,106 @@ class DocxRenderer:
             section.left_margin = Cm(left)
             section.right_margin = Cm(right)
 
+    @property
+    def effective_direction(self) -> str:
+        if hasattr(self, "_effective_direction") and self._effective_direction:
+            return self._effective_direction
+        opt_dir = self.options.direction if self.options else "auto"
+        cnt_dir = getattr(self, "content_direction", None)
+        cnt_lang = getattr(self, "content_lang", None)
+        tmpl_dir = self.template.direction if self.template else "rtl"
+        return resolve_effective_direction(opt_dir, cnt_dir, tmpl_dir, cnt_lang)
+
+    def set_content_direction(
+        self,
+        dir_val: Optional[str] = None,
+        lang_val: Optional[str] = None,
+        narrative_dir: Optional[str] = None,
+    ) -> None:
+        if dir_val in ("ltr", "rtl"):
+            self.content_direction = dir_val
+        if lang_val:
+            self.content_lang = lang_val
+        opt_dir = self.options.direction if self.options else "auto"
+        tmpl_dir = self.template.direction if self.template else "rtl"
+        old_eff = getattr(self, "_effective_direction", None)
+        self._effective_direction = resolve_effective_direction(
+            option_direction=opt_dir,
+            meta_direction=self.content_direction,
+            template_direction=tmpl_dir,
+            meta_lang=getattr(self, "content_lang", None),
+            narrative_direction=narrative_dir,
+        )
+        if old_eff != self._effective_direction:
+            self._setup_page()
+
+    @property
+    def body_font(self) -> str:
+        if self.options and self.options.font_family:
+            return self.options.font_family
+        return self.template.fonts.get("body", DEFAULT_FONT_FAMILY)
+
+    @property
+    def heading_font(self) -> str:
+        # Precedence (finilize.v3.md Section 3):
+        # 1. heading override -> 2. explicit font_family -> 3. template heading -> 4. body_font
+        if self.options and self.options.heading_font:
+            return self.options.heading_font
+        if self.options and self.options.font_family:
+            return self.options.font_family
+        if self.template.fonts.get("heading"):
+            return self.template.fonts.get("heading")
+        return self.body_font
+
+    @property
+    def latin_font(self) -> str:
+        if self.options and self.options.latin_font:
+            return self.options.latin_font
+        return self.template.fonts.get("latin", DEFAULT_LATIN_FONT)
+
+    @property
+    def code_font(self) -> str:
+        if self.options and self.options.code_font:
+            return self.options.code_font
+        return self.template.fonts.get("code", DEFAULT_CODE_FONT)
+
+    @property
+    def paragraph_align(self) -> str:
+        if self.options and self.options.text_align:
+            return self.options.text_align
+        return getattr(self.template, "paragraph_align", "start")
+
     def _setup_page(self) -> None:
-        is_rtl = self.template.direction != "ltr"
+        is_rtl = (self.effective_direction != "ltr")
         set_doc_bidi(self.doc, bidi=is_rtl)
+        for section in self.doc.sections:
+            for hf in (
+                getattr(section, "header", None),
+                getattr(section, "footer", None),
+                getattr(section, "first_page_header", None),
+                getattr(section, "first_page_footer", None),
+                getattr(section, "even_page_header", None),
+                getattr(section, "even_page_footer", None),
+            ):
+                if hf is not None:
+                    for p in hf.paragraphs:
+                        p_text = p.text or ""
+                        p_bidi = contains_persian(p_text) if not is_rtl else (not is_pure_latin(p_text) or contains_persian(p_text))
+                        set_paragraph_bidi(p, bidi=p_bidi)
         self._setup_normal_style()
         # YAML page size/margins win over shell geometry (FIN-10 / FIN-02)
         self._apply_page_geometry()
 
     def _setup_normal_style(self) -> None:
-        body_font = self.template.fonts.get("body", "Vazirmatn")
-        latin_font = self.template.fonts.get("latin", "Segoe UI")
+        body_font = self.body_font
+        latin_font = self.latin_font
         style = self.doc.styles["Normal"]
         rPr = style.element.get_or_add_rPr()
         rFonts = rPr.get_or_add_rFonts()
         rFonts.set(qn("w:ascii"), latin_font)
         rFonts.set(qn("w:hAnsi"), latin_font)
         rFonts.set(qn("w:cs"), body_font)
+        rFonts.set(qn("w:eastAsia"), body_font)
         for tag in ("w:sz", "w:szCs"):
             el = rPr.find(qn(tag))
             if el is None:
@@ -159,16 +258,13 @@ class DocxRenderer:
         if bidi_el is None:
             bidi_el = OxmlElement("w:bidi")
             pPr.append(bidi_el)
-        bidi_el.set(qn("w:val"), "1" if self.template.direction != "ltr" else "0")
+        is_rtl = (self.effective_direction != "ltr")
+        bidi_el.set(qn("w:val"), "1" if is_rtl else "0")
         jc = pPr.find(qn("w:jc"))
         if jc is None:
             jc = OxmlElement("w:jc")
             pPr.append(jc)
-        jc.set(qn("w:val"), word_safe_jc(self.paragraph_align, rtl=(self.template.direction != "ltr")))
-
-    @property
-    def paragraph_align(self) -> str:
-        return getattr(self.template, "paragraph_align", "start")
+        jc.set(qn("w:val"), word_safe_jc(self.paragraph_align, rtl=is_rtl))
 
     @property
     def paragraph_space_after_pt(self) -> float:
@@ -221,7 +317,7 @@ class DocxRenderer:
     def quote_border_side(self) -> str:
         quote_cfg = self.template.quotes or {}
         requested = str(quote_cfg.get("border_side", "physical_right"))
-        direction = self.template.direction
+        direction = self.effective_direction
         mapping = {
             "physical_right": "right",
             "physical_left": "left",
@@ -269,16 +365,16 @@ class DocxRenderer:
         if font_name:
             cs_font = font_name
         elif role == "heading":
-            cs_font = self.template.fonts.get("heading", "Vazirmatn")
+            cs_font = self.heading_font
         else:
-            cs_font = self.template.fonts.get("body", "Vazirmatn")
-        latin_font = self.template.fonts.get("latin", "Segoe UI")
+            cs_font = self.body_font
+        latin_font = self.latin_font
 
         if force_ltr:
             r = paragraph.add_run(text)
             set_run_cs_font(
                 r,
-                font_name=font_name or self.template.fonts.get("code", "Courier New"),
+                font_name=font_name or self.code_font,
                 size_pt=font_size_pt,
                 bold=bold,
                 italic=italic,
@@ -293,6 +389,7 @@ class DocxRenderer:
                 small_caps=small_caps,
             )
             set_run_rtl(r, False)
+            set_run_cs(r, False)
             return
 
         for chunk, script in split_bidi_runs(text):
@@ -317,6 +414,20 @@ class DocxRenderer:
             )
             if is_latin_run:
                 set_run_rtl(r, False)
+                set_run_cs(r, False)
+            elif script == ScriptType.PERSIAN:
+                set_run_rtl(r, True)
+                set_run_cs(r, True)
+            elif script == ScriptType.NEUTRAL:
+                if bool(re.search(r"[0-9]", chunk)):
+                    set_run_rtl(r, False)
+                    set_run_cs(r, False)
+                elif self.effective_direction == "rtl":
+                    set_run_rtl(r, True)
+                    set_run_cs(r, True)
+                else:
+                    set_run_rtl(r, False)
+                    set_run_cs(r, False)
 
     @property
     def content_width_in(self) -> float:
@@ -335,11 +446,9 @@ class DocxRenderer:
         return val.upper()
 
     def resolve_paragraph_bidi(self, sample_text: str) -> bool:
-        """Content dir/lang override, then template direction (F09)."""
-        content_dir = getattr(self, "content_direction", None) or self.template.direction
-        if content_dir == "ltr":
-            return contains_persian(sample_text)
-        if self.template.direction == "ltr" and content_dir != "rtl":
+        """Determines paragraph bidi according to effective direction and text script (V3-01)."""
+        eff_dir = self.effective_direction
+        if eff_dir == "ltr":
             return contains_persian(sample_text)
         if is_pure_latin(sample_text) and len(sample_text.strip()) > 0:
             return False
@@ -401,7 +510,7 @@ class DocxRenderer:
     def render_heading(self, info: HeadingInfo, title_inlines: Optional[List[Dict[str, Any]]] = None) -> Any:
         heading_config = self.template.headings.get(f"h{info.level}", {})
         font_size = heading_config.get("size_pt", 14 if info.level == 2 else (16 if info.level == 1 else 13))
-        heading_font = self.template.fonts.get("heading", "Vazirmatn")
+        heading_font = self.heading_font
         badge_bg = self._resolve_color(heading_config.get("badge_bg", "primary"))
         on_primary = self._resolve_color(heading_config.get("badge_fg", "on_primary"))
         primary_color = self._resolve_color("primary")
@@ -595,7 +704,7 @@ class DocxRenderer:
                 font_size_pt=11.0,
                 bold=True,
                 color_hex=hdr_fg,
-                font_name=self.template.fonts.get("heading", "Vazirmatn"),
+                font_name=self.heading_font,
             )
 
             # Body Row
@@ -623,7 +732,7 @@ class DocxRenderer:
             set_cell_margins(cell_body, top_pt=6, bottom_pt=6, left_pt=8, right_pt=8)
             accent_col = self._resolve_color(spec.get("header_bg", border_col))
             accent_border = {"val": "single", "sz": max(border_sz, 8), "color": accent_col, "space": 0}
-            if self.template.direction == "rtl":
+            if self.effective_direction == "rtl":
                 set_cell_borders(cell_body, top=subtle_border, bottom=subtle_border, left=subtle_border, right=accent_border)
             else:
                 set_cell_borders(cell_body, top=subtle_border, bottom=subtle_border, left=accent_border, right=subtle_border)
@@ -676,7 +785,7 @@ class DocxRenderer:
 
         for text in paragraphs:
             p = target.add_paragraph()
-            is_rtl = self.template.direction == "rtl" and (contains_persian(text) or not is_pure_latin(text))
+            is_rtl = self.effective_direction == "rtl" and (contains_persian(text) or not is_pure_latin(text))
             set_paragraph_bidi(p, bidi=is_rtl)
             set_paragraph_align(p, self.paragraph_align)
             set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15, side=border_side)
@@ -688,8 +797,8 @@ class DocxRenderer:
 
     def render_list_item(self, text: str, marker: str) -> Paragraph:
         p = self.doc.add_paragraph()
-        is_rtl = self.template.direction == "rtl" and contains_persian(text)
-        set_paragraph_bidi(p, bidi=is_rtl if self.template.direction == "rtl" else False)
+        is_rtl = self.effective_direction == "rtl" and contains_persian(text)
+        set_paragraph_bidi(p, bidi=is_rtl if self.effective_direction == "rtl" else False)
         set_paragraph_align(p, "start")
         p.paragraph_format.space_after = Pt(3)
         p.paragraph_format.line_spacing = self._line_spacing()
@@ -705,7 +814,7 @@ class DocxRenderer:
         """Renders definition list items: terms bolded, definitions indented."""
         for term, def_texts in def_items:
             p_term = self.doc.add_paragraph()
-            is_rtl = contains_persian(term) if self.template.direction == "rtl" else False
+            is_rtl = contains_persian(term) if self.effective_direction == "rtl" else False
             set_paragraph_bidi(p_term, bidi=is_rtl)
             set_paragraph_align(p_term, "start")
             p_term.paragraph_format.space_before = Pt(6)
@@ -714,7 +823,7 @@ class DocxRenderer:
 
             for dtext in def_texts:
                 p_def = self.doc.add_paragraph()
-                is_rtl_d = contains_persian(dtext) if self.template.direction == "rtl" else False
+                is_rtl_d = contains_persian(dtext) if self.effective_direction == "rtl" else False
                 set_paragraph_bidi(p_def, bidi=is_rtl_d)
                 set_paragraph_align(p_def, self.paragraph_align)
                 if is_rtl_d:
@@ -741,7 +850,7 @@ class DocxRenderer:
     def insert_toc_field(self) -> None:
         """Insert a native Word TOC field. Page numbers require a Word field update (F16)."""
         p = self.doc.add_paragraph()
-        set_paragraph_bidi(p, bidi=self.template.direction != "ltr")
+        set_paragraph_bidi(p, bidi=self.effective_direction != "ltr")
         set_paragraph_align(p, "start")
         fld = OxmlElement("w:fldSimple")
         fld.set(qn("w:instr"), ' TOC \\o "1-3" \\h \\z \\u ')
@@ -816,7 +925,7 @@ class DocxRenderer:
             FootnoteContainer,
             ET_to_bytes,
         )
-        from md_to_docx.pandoc_json import render_block, emit_inlines
+        from md_to_docx.pandoc_json import render_block, emit_inlines, inlines_to_text
 
         part = _ensure_footnotes_part(self.doc)
         fid = next_footnote_id(part)
@@ -830,6 +939,10 @@ class DocxRenderer:
                 first_block = note_blocks[0]
                 if first_block.get("t") in ("Para", "Plain"):
                     p0 = container.first_paragraph
+                    note_text = inlines_to_text(first_block.get("c", []))
+                    is_rtl_fn = self.resolve_paragraph_bidi(note_text)
+                    set_paragraph_bidi(p0, bidi=is_rtl_fn)
+                    set_paragraph_align(p0, self.paragraph_align)
                     emit_inlines(first_block.get("c", []), self, p0, font_size_pt=self.footnote_size_pt())
                     for blk in note_blocks[1:]:
                         render_block(blk, self, container=container)
@@ -868,7 +981,7 @@ class DocxRenderer:
         has_persian = any(contains_persian(h) for h in headers) or any(
             contains_persian(c) for r in rows for c in r
         )
-        is_rtl_table = self.template.direction == "rtl" and (
+        is_rtl_table = (self.effective_direction == "rtl") and (
             has_persian or self.template.tables.get("bidi_visual", True)
         )
         if not has_persian:
@@ -915,7 +1028,7 @@ class DocxRenderer:
                     font_size_pt=10.5,
                     bold=True,
                     color_hex=on_primary,
-                    font_name=self.template.fonts.get("heading", "Vazirmatn"),
+                    font_name=self.heading_font,
                 )
 
         # Body Rows
@@ -939,7 +1052,7 @@ class DocxRenderer:
                     font_size_pt=10.0,
                     bold=False,
                     color_hex=self.template.colors.get("body", "2D2D2D"),
-                    font_name=self.template.fonts.get("body", "Vazirmatn"),
+                    font_name=self.body_font,
                 )
 
         # Keep header row together; body rows may split across pages (FIN-11)
@@ -951,7 +1064,7 @@ class DocxRenderer:
         # Optional Caption (F-06 / F-12)
         if caption:
             p_cap = target.add_paragraph()
-            is_rtl_cap = contains_persian(caption) if self.template.direction == "rtl" else False
+            is_rtl_cap = contains_persian(caption) if self.effective_direction == "rtl" else False
             set_paragraph_bidi(p_cap, bidi=is_rtl_cap)
             set_paragraph_align(p_cap, "center")
             p_cap.paragraph_format.space_before = Pt(4)
@@ -1055,7 +1168,7 @@ class DocxRenderer:
         p_cap = None
         if caption:
             p_cap = target.add_paragraph()
-            is_rtl_cap = contains_persian(caption) if self.template.direction == "rtl" else False
+            is_rtl_cap = contains_persian(caption) if self.effective_direction == "rtl" else False
             set_paragraph_bidi(p_cap, bidi=is_rtl_cap)
             set_paragraph_align(p_cap, "center")
             p_cap.paragraph_format.space_before = Pt(2)
@@ -1069,7 +1182,7 @@ class DocxRenderer:
                 bold=False,
                 italic=False,
                 color_hex=cap_color,
-                font_name=self.template.fonts.get("body", "Vazirmatn"),
+                font_name=self.body_font,
             )
 
         for docPr in p_img._p.xpath(".//wp:docPr"):
@@ -1156,8 +1269,8 @@ class DocxRenderer:
         """
         code_cfg = self.template.code_block
         theme_name = theme or code_cfg.get("theme", "friendly")
-        code_font = self.template.fonts.get("code", "Courier New")
-        cs_font = self.template.fonts.get("body", "Vazirmatn")
+        code_font = self.code_font
+        cs_font = self.body_font
         font_size_pt = float(code_cfg.get("font_size_pt", 9.5))
         line_spacing = float(code_cfg.get("line_spacing", 1.15))
         bg_color = self._resolve_color(code_cfg.get("bg", "F6F8FA"))

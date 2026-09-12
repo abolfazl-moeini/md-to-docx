@@ -8,7 +8,7 @@
 
 کاربر می‌خواهد **قالب قابل تنظیم + فایل یا متن Markdown → سند Word با کیفیت مناسب برای فارسی و متن دوزبانه** داشته باشد. محتوا شامل متن، تیتر، جدول، تصویر، نمودار Mermaid و کد دارای رنگ‌بندی نحوی است. فونت‌ها، رنگ‌ها، فاصله‌ها، حاشیه‌ها و طراحی عناصر باید در سراسر سند مطابق قالب باشند.
 
-- خروجی واقعی بسته، **`.docx`** است. تبدیل به فرمت قدیمی Word یعنی `.doc` پیاده‌سازی نشده و CLI آن پسوند را رد می‌کند. تغییر نام فایل، تبدیل فرمت نیست.
+- خروجی‌های رسمی بسته، **`.docx`** و **`.pdf`** هستند. تبدیل به فرمت قدیمی Word یعنی `.doc` پیاده‌سازی نشده و CLI آن پسوند را رد می‌کند. تغییر نام فایل، تبدیل فرمت نیست.
 - محصول فعلی یک **کتابخانهٔ Python و ابزار خط فرمان** است؛ رابط گرافیکی، وب‌سرویس یا ویرایشگر آنلاین جزو پیاده‌سازی فعلی نیست.
 - قالب پیش‌فرض `purple_book` است؛ دو تصویر در `sample-template/1.jpg` و `sample-template/2.jpg` مرجع بصری طراحی اولیه‌اند.
 - فونت فارسی پیش‌فرض **Vazirmatn** است و باید قابل تغییر بماند. متن لاتین و کد نقش‌های فونت جدا دارند.
@@ -31,9 +31,12 @@
 
 | مسیر | مسئولیت |
 | --- | --- |
-| `src/md_to_docx/__init__.py` | خروجی عمومی بسته: `Template` و `convert_markdown_to_docx` |
+| `src/md_to_docx/__init__.py` | خروجی عمومی بسته: `Template`، `convert_markdown_to_docx`، `convert_markdown_to_pdf` و `convert_docx_to_pdf` |
 | `src/md_to_docx/cli.py` | دستورات Click، ورودی فایل و stdin، پیام‌ها و کدهای خروج |
 | `src/md_to_docx/pipeline.py` | هماهنگی تبدیل، فراخوانی Pandoc، staging، انتشار خروجی و مدیریت media |
+| `src/md_to_docx/pdf.py` | آداپتور بدون‌سر LibreOffice برای تبدیل DOCX به PDF، ایزولاسیون فرآیند و اعتبارسنجی |
+| `src/md_to_docx/options.py` | کلاس `GeneratorOptions`، اعتبارسنجی گزینه‌ها و تحلیل تقدم جهت سند |
+| `src/md_to_docx/fonts_embed.py` | خواندن `fsType` فونت، ارزیابی مجوز، obfuscation و تعبیه یا پاکسازی فونت در DOCX |
 | `src/md_to_docx/template.py` | یافتن قالب، خواندن YAML، اعتبارسنجی و حل مسیر فایل‌های قالب |
 | `src/md_to_docx/admonitions.py` | تبدیل syntax یادداشت‌ها و هشدارها به fenced Div با توجه به code fence |
 | `src/md_to_docx/mermaid.py` | تشخیص و اجرای mmdc/مرورگر، تنظیم فونت و CSS، تبدیل Mermaid در AST به تصویر |
@@ -96,19 +99,32 @@ Pandoc را باید جداگانه نصب کرد. `scripts/bootstrap.sh` راه
 
 ```bash
 md2docx convert input.md -o output.docx --template purple_book
+md2docx convert input.md -o output.pdf --template purple_book
+md2docx convert input.md -o output.pdf --keep-docx
+md2docx to-pdf input.docx -o output.pdf
 md2docx convert input.md -o output.docx --template ./templates/my_theme
 md2docx templates list
 md2docx templates validate purple_book
 md2docx to-md input.docx -o output.md
 ```
 
+- برای تبدیل Markdown مستقیم به PDF از پسوند `.pdf` در `-o` دستور `convert` استفاده می‌شود. فلگ اختیاری `--keep-docx` فایل DOCX میانی را نیز نگه می‌دارد.
+- برای تبدیل اختصاصی DOCX به PDF از دستور `md2docx to-pdf input.docx -o output.pdf` استفاده می‌شود.
+- برای تنظیم مهلت زمانی LibreOffice از گزینهٔ `--pdf-timeout` (در `convert`) و `--timeout` / `--pdf-timeout` (در `to-pdf`) استفاده می‌شود (پیش‌فرض: ۱۲۰ ثانیه).
 - برای تبدیل معکوس DOCX به Markdown از دستور `md2docx to-md input.docx -o output.md` استفاده می‌شود.
 - در ورودی فایل، اگر `-o` تعیین نشود خروجی کنار ورودی با پسوند `.docx` ساخته می‌شود.
 - CLI به‌صورت پیش‌فرض فایل موجود را بازنویسی نمی‌کند؛ `--overwrite` یا `-f` این رفتار را فعال می‌کند.
 - ورودی `-` به معنی خواندن متن از stdin است و در این حالت `-o` الزامی است.
 - برای stdin، مبنای اولیهٔ مسیر تصاویر پوشهٔ جاری است. CLI گزینهٔ `--base-dir` ندارد.
-- کد خروج کلی: `0` موفقیت، `1` خطای تبدیل/عملیاتی، `2` خطای کاربرد/اعتبارسنجی CLI. برای جزئیات هر مسیر خطا، `cli.py` و تست آن را ببین.
-- گزینهٔ اختصاصی تغییر فونت در CLI وجود ندارد؛ فونت از قالب تنظیم می‌شود.
+- کد خروج کلی: `0` موفقیت، `1` خطای تبدیل/عملیاتی (مانند نبود LibreOffice یا خطای رندر)، `2` خطای کاربرد/اعتبارسنجی CLI یا پسوند نامعتبر.
+- گزینه‌های تایپوگرافی و جهت در CLI:
+  - `--direction [auto|rtl|ltr]`: جهت متن سند (پیش‌فرض `auto` با تحلیل هوشمند متن روایی).
+  - `--text-align [start|right|left|center|both|justify]`: تراز پاراگراف‌های بدنه.
+  - `--font, --font-family`: نام قلم متن فارسی / اسکریپت پیچیده (پیش‌فرض از قالب، مثلاً `Vazirmatn`).
+  - `--heading-font`: نام قلم تیترها.
+  - `--latin-font`: نام قلم عبارات لاتین (پیش‌فرض `Segoe UI`).
+  - `--code-font`: نام قلم بلوک‌های کد و کدهای درون‌خطی (پیش‌فرض `Courier New`).
+  - `--embed-fonts / --no-embed-fonts`: جاسازی قلم‌های TrueType در سند DOCX (پیش‌فرض: غیرفعال).
 
 مثال stdin با newline واقعی:
 
@@ -123,12 +139,26 @@ MARKDOWN
 ### کتابخانهٔ Python
 
 ```python
-from md_to_docx import Template, convert_markdown_to_docx
+from md_to_docx import Template, convert_markdown_to_docx, convert_markdown_to_pdf, convert_docx_to_pdf
 
-saved_path = convert_markdown_to_docx(
+saved_docx = convert_markdown_to_docx(
     input_path="input.md",
     output_path="output.docx",
     template="purple_book",
+    overwrite=False,
+)
+
+saved_pdf = convert_markdown_to_pdf(
+    input_path="input.md",
+    output_path="output.pdf",
+    template="purple_book",
+    overwrite=False,
+    keep_docx=False,
+)
+
+saved_converted_pdf = convert_docx_to_pdf(
+    docx_path="output.docx",
+    output_pdf_path="output.pdf",
     overwrite=False,
 )
 
@@ -155,8 +185,20 @@ saved_from_text = convert_markdown_to_docx(
 - محدودیت ورودی فعلی `20 * 1024 * 1024` بایت است؛ برای متن مستقیم با UTF-8 محاسبه می‌شود.
 - API خودش تبدیل به `.doc` ندارد؛ همیشه نام خروجی `.docx` بده. کنترل پسوند API را هم‌ارز اعتبارسنجی CLI فرض نکن.
 
+قرارداد `convert_markdown_to_pdf`:
+- تمامی پارامترهای `convert_markdown_to_docx` را به همراه `keep_docx: bool = False` و `pdf_timeout: int = 120` می‌پذیرد.
+- خروجی الزماً پسوند `.pdf` دارد؛ مسیر فایل میانی DOCX در صورت `keep_docx=True` با همان نام و پسوند `.docx` منتشر می‌شود.
+- پوشهٔ مدیا در تبدیل PDF به‌طور خودکار سرکوب و پاکسازی می‌شود مگر اینکه `keep_docx=True` باشد یا `media_dir` صریحاً تعیین گردد.
+
+قرارداد `convert_docx_to_pdf`:
+- تبدیل مستقل سند DOCX موجود به PDF از طریق LibreOffice بدون‌سر.
+- ورودی الزماً `.docx` موجود و خروجی الزماً `.pdf` است.
+- پارامترهای `timeout: int = 120`، `overwrite: bool = True`، `soffice_binary: Optional[str | Path]` و `font_dirs: Optional[List[Path]]`.
+- خروجی با اعتبارسنجی سربرگ `%PDF-` و تریلر `%%EOF` کنترل می‌شود.
+
 ## ۶. مسیر واقعی تبدیل
 
+### مسیر ساخت DOCX:
 ```text
 Markdown file / content / stdin
   → input validation + Template.load
@@ -167,6 +209,17 @@ Markdown file / content / stdin
   → ast_to_docx + DocxRenderer
   → python-docx / OOXML → staged DOCX
   → locked publication + managed PNG files + staging cleanup
+```
+
+### مسیر ساخت PDF:
+```text
+Markdown file / content / stdin
+  → preprocess_admonitions + Pandoc AST + process_mermaid_ast
+  → DocxRenderer → Staged DOCX
+  → Headless LibreOffice (ایزولاسیون با -env:UserInstallation، تزریق Fontconfig و کنترل Process Group)
+  → Staged PDF → اعتبارسنجی یکپارچگی (is_valid_pdf: هدر، فوتر و اندازه)
+  → انتشار اتمیک (قفل fcntl، بک‌آپ و rollback در صورت شکست)
+  → پاکسازی دایرکتوری staging موقت
 ```
 
 Pandoc با این reader فراخوانی می‌شود:
@@ -208,7 +261,7 @@ markdown+fenced_divs+pipe_tables+backtick_code_blocks+raw_html+lists_without_pre
 | `fonts.latin` | `Segoe UI` | بخش‌های لاتین متن |
 | `fonts.code` | `Courier New` | کد |
 
-برای تغییر فونت فارسی در سراسر قالب، نقش‌های مرتبط از جمله `body` و `heading` را تنظیم کن؛ تغییر یک نقش لزوماً نقش‌های مستقل دیگر را تغییر نمی‌دهد. فونت کد پیش‌فرض `Courier New` انتخاب شده تا در تمام نسخه‌های Word روی ویندوز، مک و لینوکس بدون نیاز به نصب فونت سیستمی جداگانه (نظیر DejaVu Sans Mono) به‌صورت monospace صحیح و یک‌دست نمایش داده شود، در حالی که در صورت نیاز کاربر می‌تواند مقدار `fonts.code` را در `config.yaml` تغییر دهد. `font_files` مسیر فایل فونت برای استفاده در رندر Mermaid را فراهم می‌کند. ثبت نام فونت در Word با جاسازی فایل فونت فرق دارد: **فونت در DOCX جاسازی نمی‌شود** و دستگاه نمایش‌دهنده باید آن را داشته باشد یا از جایگزین استفاده خواهد کرد. مجوز فونت همراه دارایی‌ها در `fonts/OFL.txt` نگهداری می‌شود.
+برای تغییر فونت فارسی در سراسر قالب، نقش‌های مرتبط از جمله `body` و `heading` را تنظیم کن؛ تغییر یک نقش لزوماً نقش‌های مستقل دیگر را تغییر نمی‌دهد. فونت کد پیش‌فرض `Courier New` انتخاب شده تا در تمام نسخه‌های Word روی ویندوز، مک و لینوکس بدون نیاز به نصب فونت سیستمی جداگانه (نظیر DejaVu Sans Mono) به‌صورت monospace صحیح و یک‌دست نمایش داده شود، در حالی که در صورت نیاز کاربر می‌تواند مقدار `fonts.code` را در `config.yaml` تغییر دهد. `font_files` مسیر فایل فونت برای استفاده در رندر Mermaid را فراهم می‌کند. ثبت نام فونت در Word با جاسازی فایل فونت فرق دارد: **به‌صورت پیش‌فرض فونت در DOCX جاسازی نمی‌شود** مگر آنکه با گزینهٔ `--embed-fonts` در CLI یا پارامتر `embed_fonts=True` در API درخواست شود (که در آن صورت فونت‌های TrueType معتبر قالب با اعتبارسنجی مجوز `fsType` درون پکیج جاسازی می‌شوند). در غیاب جاسازی، دستگاه نمایش‌دهنده باید فونت را داشته باشد یا از جایگزین استفاده خواهد کرد. مجوز فونت همراه دارایی‌ها در `fonts/OFL.txt` نگهداری می‌شود.
 
 `page` اندازه و حاشیهٔ صفحه و تنظیمات متن پایه را تعیین می‌کند. اندازه‌های شناخته‌شدهٔ فعلی `A4`، `A5`، `Letter` و `Legal` هستند. رنگ‌ها می‌توانند hex یا در محل‌های پشتیبانی‌شده نام رنگ در palette باشند. واحدها را با نام کلید و مصرف‌کننده کنترل کن؛ واحد OOXML برای همهٔ اندازه‌ها یکسان نیست.
 
