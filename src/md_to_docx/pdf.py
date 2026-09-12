@@ -163,6 +163,40 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
         pass
 
 
+def _docx_is_rtl(docx_path: Path) -> bool:
+    """Checks if a DOCX file defines RTL direction in section or body."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(docx_path) as z:
+            if "word/document.xml" in z.namelist():
+                content = z.read("word/document.xml")
+                return b"<w:bidi" in content
+    except Exception:
+        pass
+    return False
+
+
+def _apply_pdf_r2l_direction(pdf_path: Path) -> None:
+    """Injects /ViewerPreferences << /Direction /R2L >> into the PDF catalog so PDF viewers render RTL."""
+    try:
+        import pypdf
+        from pypdf.generic import NameObject, DictionaryObject
+        reader = pypdf.PdfReader(str(pdf_path))
+        writer = pypdf.PdfWriter()
+        writer.append(reader)
+        vp = writer._root_object.get(NameObject("/ViewerPreferences"))
+        if vp is None or not isinstance(vp, DictionaryObject):
+            vp = DictionaryObject()
+            writer._root_object[NameObject("/ViewerPreferences")] = vp
+        vp[NameObject("/Direction")] = NameObject("/R2L")
+        tmp_target = pdf_path.with_name(f"{pdf_path.stem}.r2l.tmp")
+        with open(tmp_target, "wb") as f:
+            writer.write(f)
+        os.replace(tmp_target, pdf_path)
+    except Exception:
+        pass
+
+
 def convert_docx_to_pdf(
     docx_path: str | Path,
     output_pdf_path: str | Path,
@@ -265,6 +299,26 @@ def convert_docx_to_pdf(
     conv_stage_dir = Path(tempfile.mkdtemp(prefix=f".lo_stage_{uuid.uuid4().hex[:8]}_", dir=stage_parent))
 
     try:
+        # Pre-seed profile with CTL and RTL locale settings to ensure proper bidi layout
+        user_dir = profile_dir / "user"
+        user_dir.mkdir(parents=True, exist_ok=True)
+        reg_mod = user_dir / "registrymodifications.xcu"
+        reg_content = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<oor:items xmlns:oor="http://openoffice.org/2001/registry" '
+            'xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+            'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n'
+            '  <item oor:path="/org.openoffice.Office.Common/I18N/CTL">\n'
+            '    <prop oor:name="CTLFont" oor:type="xs:boolean"><value>true</value></prop>\n'
+            '    <prop oor:name="CTLSequenceChecking" oor:type="xs:boolean"><value>true</value></prop>\n'
+            '  </item>\n'
+            '  <item oor:path="/org.openoffice.Setup/L10N">\n'
+            '    <prop oor:name="ooSetupSystemLocale" oor:type="xs:string"><value>fa-IR</value></prop>\n'
+            '  </item>\n'
+            '</oor:items>\n'
+        )
+        reg_mod.write_text(reg_content, encoding="utf-8")
+
         profile_uri = profile_dir.resolve().as_uri()
         cmd = [
             str(soffice_path),
@@ -347,6 +401,10 @@ def convert_docx_to_pdf(
 
         if not is_valid_pdf(expected_pdf, min_size=min_size):
             raise ConvertError(f"Generated PDF at '{expected_pdf}' is invalid, empty, or corrupt.")
+
+        # Post-process: inject /ViewerPreferences << /Direction /R2L >> if document is RTL
+        if _docx_is_rtl(in_docx):
+            _apply_pdf_r2l_direction(expected_pdf)
 
         # Final publish under inter-process lock so concurrent converters
         # serialize on the same output (mirrors pipeline._publish_lock; the lock

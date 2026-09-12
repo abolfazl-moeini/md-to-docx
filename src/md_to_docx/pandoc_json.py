@@ -1291,13 +1291,13 @@ def render_block(
                     set_paragraph_align(p, "start")
                     p.paragraph_format.line_spacing = renderer._line_spacing()
                     p.paragraph_format.space_after = Pt(2)
-                    hanging = Inches(0.22)
-                    indent = Inches(0.25 * (list_level + 1)) + hanging
+                    indent = Inches(0.25 * (list_level + 1))
                     if this_rtl:
                         p.paragraph_format.right_indent = indent
                     else:
-                        p.paragraph_format.left_indent = indent
-                    p.paragraph_format.first_line_indent = -hanging
+                        hanging = Inches(0.22)
+                        p.paragraph_format.left_indent = indent + hanging
+                        p.paragraph_format.first_line_indent = -hanging
                     if blk_idx == 0:
                         r_mark = p.add_run("- ")
                         set_run_cs_font(r_mark, font_name=renderer.template.fonts.get("body", "Vazirmatn"), size_pt=renderer.body_font_size_pt)
@@ -1338,13 +1338,13 @@ def render_block(
                     set_paragraph_align(p, "start")
                     p.paragraph_format.line_spacing = renderer._line_spacing()
                     p.paragraph_format.space_after = Pt(2)
-                    hanging = Inches(0.22)
-                    indent = Inches(0.25 * (list_level + 1)) + hanging
+                    indent = Inches(0.25 * (list_level + 1))
                     if this_rtl:
                         p.paragraph_format.right_indent = indent
                     else:
-                        p.paragraph_format.left_indent = indent
-                    p.paragraph_format.first_line_indent = -hanging
+                        hanging = Inches(0.22)
+                        p.paragraph_format.left_indent = indent + hanging
+                        p.paragraph_format.first_line_indent = -hanging
                     if blk_idx == 0:
                         disp_marker = format_ordered_marker(current_num, style, delim, this_rtl)
                         r_mark = p.add_run(f"{disp_marker} ")

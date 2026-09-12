@@ -56,8 +56,14 @@ def set_paragraph_align(paragraph: Paragraph, align: str = "both") -> None:
     existing_jc = pPr.find(qn("w:jc"))
     if existing_jc is not None:
         pPr.remove(existing_jc)
+    is_rtl = _paragraph_is_rtl(paragraph)
+    if is_rtl and align in ("start", "right"):
+        # In RTL, omitting w:jc allows Word, Pages, and LibreOffice to naturally
+        # align to the right margin (the start of text direction). An explicit
+        # w:jc val="right" causes LibreOffice to flip the alignment to physical left (end).
+        return
     jc = OxmlElement("w:jc")
-    jc.set(qn("w:val"), word_safe_jc(align, rtl=_paragraph_is_rtl(paragraph)))
+    jc.set(qn("w:val"), word_safe_jc(align, rtl=is_rtl))
     pPr.append(jc)
 
 
@@ -375,7 +381,11 @@ def set_doc_bidi(doc: Document, bidi: bool = True) -> None:
         if bidi:
             if existing is None:
                 existing = OxmlElement("w:bidi")
-                sectPr.append(existing)
+                docGrid = sectPr.find(qn("w:docGrid"))
+                if docGrid is not None:
+                    sectPr.insert(sectPr.index(docGrid), existing)
+                else:
+                    sectPr.append(existing)
             existing.set(qn("w:val"), "1")
         else:
             if existing is not None:
