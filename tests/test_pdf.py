@@ -977,9 +977,8 @@ def test_package_metadata_and_exports():
 
 def test_docx_is_rtl_detection(tmp_path):
     from md_to_docx.pdf import _docx_is_rtl
+    from md_to_docx.oxml import set_doc_bidi, set_paragraph_bidi, set_table_bidi_visual
     from docx import Document
-    from docx.oxml import OxmlElement
-    from docx.oxml.ns import qn
 
     # 1. Non-RTL docx
     doc_ltr = Document()
@@ -988,24 +987,61 @@ def test_docx_is_rtl_detection(tmp_path):
     doc_ltr.save(str(p_ltr))
     assert _docx_is_rtl(p_ltr) is False
 
-    # 2. RTL docx with w:bidi
+    # 2. Section-level RTL (the catalog Direction signal)
     doc_rtl = Document()
-    p = doc_rtl.add_paragraph("سلام دنیا")
-    pPr = p._p.get_or_add_pPr()
-    bidi = OxmlElement("w:bidi")
-    bidi.set(qn("w:val"), "1")
-    pPr.append(bidi)
+    doc_rtl.add_paragraph("سلام دنیا")
+    set_doc_bidi(doc_rtl, bidi=True)
     p_rtl = tmp_path / "rtl.docx"
     doc_rtl.save(str(p_rtl))
     assert _docx_is_rtl(p_rtl) is True
 
-    # 3. Non-existent file
+    # 3. Explicit LTR section bidi=0 must not be treated as RTL
+    doc_ltr_explicit = Document()
+    doc_ltr_explicit.add_paragraph("Hello")
+    set_doc_bidi(doc_ltr_explicit, bidi=False)
+    p_ltr_explicit = tmp_path / "ltr_explicit.docx"
+    doc_ltr_explicit.save(str(p_ltr_explicit))
+    assert _docx_is_rtl(p_ltr_explicit) is False
+
+    # 4. Paragraph w:bidi or table bidiVisual alone is not document RTL
+    doc_para = Document()
+    p = doc_para.add_paragraph("سلام")
+    set_paragraph_bidi(p, bidi=True)
+    tbl = doc_para.add_table(rows=1, cols=1)
+    set_table_bidi_visual(tbl)
+    p_para = tmp_path / "para_bidi.docx"
+    doc_para.save(str(p_para))
+    assert _docx_is_rtl(p_para) is False
+
+    # 5. Converter LTR output must not look like RTL (sectPr bidi=0 still contains <w:bidi)
+    from md_to_docx import convert_markdown_to_docx
+    ltr_out = tmp_path / "converted_ltr.docx"
+    convert_markdown_to_docx(
+        content="# Hello\n\nAn English paragraph.\n",
+        output_path=ltr_out,
+        template="purple_book",
+        direction="ltr",
+        overwrite=True,
+    )
+    assert _docx_is_rtl(ltr_out) is False
+
+    rtl_out = tmp_path / "converted_rtl.docx"
+    convert_markdown_to_docx(
+        content="# سلام\n\nیک پاراگراف فارسی.\n",
+        output_path=rtl_out,
+        template="purple_book",
+        direction="rtl",
+        overwrite=True,
+    )
+    assert _docx_is_rtl(rtl_out) is True
+
+    # 6. Non-existent file
     assert _docx_is_rtl(tmp_path / "nonexistent.docx") is False
 
 
 def test_apply_pdf_r2l_direction(tmp_path):
+    pypdf = pytest.importorskip("pypdf")
     from md_to_docx.pdf import _apply_pdf_r2l_direction
-    import pypdf
 
     # Create a minimal valid PDF
     writer = pypdf.PdfWriter()
@@ -1027,4 +1063,26 @@ def test_apply_pdf_r2l_direction(tmp_path):
     assert "/ViewerPreferences" in root
     vp = root["/ViewerPreferences"]
     assert vp["/Direction"] == "/R2L"
+    assert is_valid_pdf(test_pdf, min_size=32)
+
+
+def test_apply_pdf_r2l_keeps_original_when_rewrite_is_invalid(tmp_path, monkeypatch):
+    pypdf = pytest.importorskip("pypdf")
+    from md_to_docx import pdf as pdf_mod
+
+    writer = pypdf.PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    test_pdf = tmp_path / "keep_original.pdf"
+    with open(test_pdf, "wb") as f:
+        writer.write(f)
+    original = test_pdf.read_bytes()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("pypdf rewrite failed")
+
+    monkeypatch.setattr(pypdf.PdfWriter, "write", boom)
+    pdf_mod._apply_pdf_r2l_direction(test_pdf)
+    assert test_pdf.read_bytes() == original
+    leftovers = list(tmp_path.glob(".keep_original.r2l_*.tmp"))
+    assert leftovers == []
 

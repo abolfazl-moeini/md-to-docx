@@ -164,20 +164,33 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
 
 
 def _docx_is_rtl(docx_path: Path) -> bool:
-    """Checks if a DOCX file defines RTL direction in section or body."""
+    """True when section properties request RTL (w:sectPr/w:bidi val != 0).
+
+    Paragraph w:bidi or table w:bidiVisual is not the document direction.
+    Explicit w:bidi val="0" is LTR and must not inject PDF /R2L.
+    """
     import zipfile
+    from xml.etree import ElementTree as ET
+
+    w_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     try:
         with zipfile.ZipFile(docx_path) as z:
-            if "word/document.xml" in z.namelist():
-                content = z.read("word/document.xml")
-                return b"<w:bidi" in content
+            if "word/document.xml" not in z.namelist():
+                return False
+            root = ET.fromstring(z.read("word/document.xml"))
+        for bidi in root.findall(f".//{w_ns}sectPr/{w_ns}bidi"):
+            if bidi.get(f"{w_ns}val", "1") != "0":
+                return True
+        return False
     except Exception:
-        pass
-    return False
+        return False
 
 
 def _apply_pdf_r2l_direction(pdf_path: Path) -> None:
-    """Injects /ViewerPreferences << /Direction /R2L >> into the PDF catalog so PDF viewers render RTL."""
+    """Injects /ViewerPreferences << /Direction /R2L >> into the PDF catalog so PDF viewers render RTL.
+
+    On rewrite failure the original PDF is left unchanged.
+    """
     tmp_target = None
     try:
         import pypdf
@@ -185,14 +198,18 @@ def _apply_pdf_r2l_direction(pdf_path: Path) -> None:
         reader = pypdf.PdfReader(str(pdf_path))
         writer = pypdf.PdfWriter()
         writer.append(reader)
-        vp = writer._root_object.get(NameObject("/ViewerPreferences"))
+        root = getattr(writer, "root_object", None) or writer._root_object
+        vp = root.get(NameObject("/ViewerPreferences"))
         if vp is None or not isinstance(vp, DictionaryObject):
             vp = DictionaryObject()
-            writer._root_object[NameObject("/ViewerPreferences")] = vp
+            root[NameObject("/ViewerPreferences")] = vp
         vp[NameObject("/Direction")] = NameObject("/R2L")
         tmp_target = pdf_path.with_name(f".{pdf_path.stem}.r2l_{uuid.uuid4().hex[:8]}.tmp")
         with open(tmp_target, "wb") as f:
             writer.write(f)
+        if not is_valid_pdf(tmp_target, min_size=32):
+            tmp_target.unlink(missing_ok=True)
+            return
         os.replace(tmp_target, pdf_path)
     except Exception:
         if tmp_target is not None and tmp_target.exists():
