@@ -154,7 +154,8 @@ def test_ast_to_docx_ordered_and_bullet_lists():
     assert any(t.strip().startswith("1.") for t in texts)
     assert any(t.strip().startswith("2.") for t in texts)
     assert any("bullet one" in t for t in texts)
-    assert "•" not in "".join(texts)
+    # After T-05: bullet lists use '•' marker instead of '-'
+    assert "•" in "".join(texts)
 
 
 def test_ast_to_docx_code_block():

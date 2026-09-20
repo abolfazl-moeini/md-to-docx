@@ -167,13 +167,26 @@ def test_nested_lists_progressive_indentation():
     p_outer = doc.paragraphs[0]
     p_inner = doc.paragraphs[1]
 
-    # In RTL, right_indent is set; in LTR, left_indent is set
-    outer_indent = p_outer.paragraph_format.right_indent or p_outer.paragraph_format.left_indent
-    inner_indent = p_inner.paragraph_format.right_indent or p_inner.paragraph_format.left_indent
+    # After T-05 fix: logical w:ind/@w:start is used (not physical right_indent/left_indent)
+    # Both paragraphs must have w:ind with start > 0; inner indent must be deeper than outer
+    from docx.oxml.ns import qn as _qn
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
-    assert outer_indent is not None
-    assert inner_indent is not None
-    assert inner_indent > outer_indent
+    def get_start(p):
+        ind = p._p.find(f".//{{{W}}}ind")
+        if ind is None:
+            return None
+        val = ind.get(f"{{{W}}}start")
+        return int(val) if val is not None else None
+
+    outer_start = get_start(p_outer)
+    inner_start = get_start(p_inner)
+
+    assert outer_start is not None, "Outer list item must have w:ind/@w:start"
+    assert inner_start is not None, "Inner list item must have w:ind/@w:start"
+    assert inner_start > outer_start, (
+        f"Inner list must be indented more than outer: inner={inner_start}, outer={outer_start}"
+    )
 
 
 def test_comprehensive_markdown_fixture_end_to_end(tmp_path):

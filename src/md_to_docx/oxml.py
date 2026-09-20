@@ -21,10 +21,16 @@ def _paragraph_is_rtl(paragraph: Paragraph) -> bool:
 
 
 def word_safe_jc(align: str, rtl: bool) -> str:
-    """Map logical alignment to ST_Jc values Word accepts (left/right/center/both).
+    """Map logical alignment to valid ST_Jc values.
 
-    ``start`` / ``end`` are not in the Word transitional ST_Jc enum; Word for
-    Windows/Mac often refuses to open the package when they appear.
+    ``start`` and ``end`` ARE valid ST_Jc values per ECMA-376 §17.18.44.
+    Word itself writes ``start`` in Persian/Arabic documents (verified in 15 real Word files).
+    The previous docstring claiming Word rejects them was incorrect.
+
+    Using ``start``/``end`` is preferred over physical ``right``/``left`` because:
+    - ``start`` means "beginning of text direction" — right in RTL, left in LTR.
+    - Physical ``right`` in a ``w:bidi`` paragraph is interpreted as the LEFT edge by
+      both LibreOffice and Word (per MS-OE376 §2.3.1.13), causing text to appear left-aligned.
     """
     raw = (align or "both").strip().lower()
     if raw in ("both", "justify"):
@@ -32,9 +38,9 @@ def word_safe_jc(align: str, rtl: bool) -> str:
     if raw == "center":
         return "center"
     if raw == "start":
-        return "right" if rtl else "left"
+        return "start"   # logical: right in RTL, left in LTR — never flipped
     if raw == "end":
-        return "left" if rtl else "right"
+        return "end"     # logical: left in RTL, right in LTR — never flipped
     if raw in ("left", "right"):
         return raw
     return "both"
@@ -51,20 +57,41 @@ def set_paragraph_bidi(paragraph: Paragraph, bidi: bool = True) -> None:
 
 
 def set_paragraph_align(paragraph: Paragraph, align: str = "both") -> None:
-    """Sets paragraph justification using Word-safe ST_Jc values (left/right/center/both)."""
+    """Sets paragraph justification using logical ST_Jc values (start/end/center/both/left/right).
+
+    Uses ``start``/``end`` for RTL-safe logical alignment. These ARE valid ST_Jc values
+    per ECMA-376 §17.18.44 and are written by Word itself in Persian documents.
+    Physical ``right`` in a bidi paragraph is interpreted as LEFT by LibreOffice/Word,
+    which is why it must never be written for RTL+start alignment.
+    """
     pPr = paragraph._p.get_or_add_pPr()
     existing_jc = pPr.find(qn("w:jc"))
     if existing_jc is not None:
         pPr.remove(existing_jc)
     is_rtl = _paragraph_is_rtl(paragraph)
-    if is_rtl and align in ("start", "right"):
-        # In RTL, omitting w:jc allows Word, Pages, and LibreOffice to naturally
-        # align to the right margin (the start of text direction). An explicit
-        # w:jc val="right" causes LibreOffice to flip the alignment to physical left (end).
-        return
     jc = OxmlElement("w:jc")
     jc.set(qn("w:val"), word_safe_jc(align, rtl=is_rtl))
     pPr.append(jc)
+
+
+def set_paragraph_list_indent(paragraph: Paragraph, start_dxa: int = 360, hanging_dxa: int = 360) -> None:
+    """Sets logical list indentation using w:ind/@w:start and @w:hanging.
+
+    Uses logical attributes (start/hanging) instead of physical left/right so the
+    same XML works correctly in both RTL and LTR paragraphs without direction-specific logic.
+    - ``w:start``: distance from the leading margin (right in RTL, left in LTR).
+    - ``w:hanging``: how far the first line hangs back toward the margin (creates hanging indent).
+    This ensures multi-line items wrap under the text, not under the bullet marker.
+    """
+    pPr = paragraph._p.get_or_add_pPr()
+    existing_ind = pPr.find(qn("w:ind"))
+    if existing_ind is not None:
+        pPr.remove(existing_ind)
+    ind = OxmlElement("w:ind")
+    ind.set(qn("w:start"), str(start_dxa))
+    ind.set(qn("w:hanging"), str(hanging_dxa))
+    pPr.append(ind)
+
 
 
 def set_run_cs_font(

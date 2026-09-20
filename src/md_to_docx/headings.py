@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 # Regex matching numbers (Latin digits, Persian digits ۰-۹, Arabic-Indic digits ٠-٩) separated by . or -
+# Accepts optional trailing dot/dash separator before the space (e.g. "۱. عنوان" or "1. Introduction")
 HEADING_NUMBER_RE = re.compile(
-    r"^(?P<num>[\d\u06F0-\u06F9\u0660-\u0669]+(?:[.\-][\d\u06F0-\u06F9\u0660-\u0669]+)*)\s+(?P<title>.+)$"
+    r"^(?P<num>[\d\u06F0-\u06F9\u0660-\u0669]+(?:[.\-][\d\u06F0-\u06F9\u0660-\u0669]+)*)\.?\s+(?P<title>.+)$"
 )
 
 HASHES_RE = re.compile(r"^(#{1,6})\s*(.*)$")

@@ -31,6 +31,7 @@ from md_to_docx.oxml import (
     word_safe_jc,
     set_paragraph_bidi,
     set_paragraph_align,
+    set_paragraph_list_indent,
     set_run_cs_font,
     set_run_rtl,
     set_run_cs,
@@ -437,13 +438,29 @@ class DocxRenderer:
         return width_emu / 914400.0
 
     def _resolve_color(self, color_name_or_hex: str) -> str:
-        """Resolves color tokens (e.g. 'primary') to 6-digit hex string without #."""
+        """Resolves color tokens (e.g. 'primary') to 6-digit hex string without #.
+
+        If the resolved value is not a valid hex color, a warning is recorded and
+        the fallback color '000000' (black) is returned to prevent invalid OOXML.
+        """
+        import re as _re
         if not color_name_or_hex:
             return "000000"
         val = str(self.template.colors.get(color_name_or_hex, color_name_or_hex)).strip().lstrip("#")
         if len(val) == 3:
             val = "".join(c * 2 for c in val)
-        return val.upper()
+        val = val.upper()
+        # Validate: must be 6 hex digits or "auto"
+        if val != "AUTO" and not _re.fullmatch(r"[0-9A-F]{6}", val):
+            warning = (
+                f"Invalid color value {val!r} for token {color_name_or_hex!r}. "
+                "Check template colors palette. Falling back to black (000000)."
+            )
+            if self.warnings is not None:
+                self.warnings.append(warning)
+            return "000000"
+        return val
+
 
     def resolve_paragraph_bidi(self, sample_text: str) -> bool:
         """Determines paragraph bidi according to effective direction and text script (V3-01)."""
@@ -802,12 +819,22 @@ class DocxRenderer:
         set_paragraph_align(p, "start")
         p.paragraph_format.space_after = Pt(3)
         p.paragraph_format.line_spacing = self._line_spacing()
-        indent = Inches(0.25)
+        # Use logical start/hanging indent: works correctly in both RTL and LTR
+        # without direction-specific branching (resolves defect F-09 / disagreement #2)
+        set_paragraph_list_indent(p, start_dxa=360, hanging_dxa=360)
+        # Use bullet character instead of hyphen for better typography
+        bullet_char = "•"
+        # Render marker run with proper RTL/CS attributes
+        marker_run = p.add_run(bullet_char + "\t")
         if is_rtl:
-            p.paragraph_format.right_indent = indent
-        else:
-            p.paragraph_format.left_indent = indent
-        self.append_text(p, f"{marker} {text}".strip())
+            set_run_rtl(marker_run)
+        set_run_cs_font(
+            marker_run,
+            font_name=self.body_font,
+            size_pt=self.body_font_size_pt,
+            bidi_lang=self.template.language_bidi,
+        )
+        self.append_text(p, text.strip())
         return p
 
     def render_definition_list(self, def_items: List[Tuple[str, List[str]]]) -> None:

@@ -414,7 +414,8 @@ def to_md(docx_path: str, output_path: str | None, overwrite: bool, media_dir: s
 @click.option("-o", "--output", "output_path", type=click.Path(dir_okay=False), help="Output PDF path.")
 @click.option("-f", "--overwrite", is_flag=True, default=False, help="Overwrite existing output PDF file.")
 @click.option("--timeout", "--pdf-timeout", "pdf_timeout", default=120, type=click.IntRange(min=1), show_default=True, help="LibreOffice conversion timeout in seconds.")
-def to_pdf(docx_path: str, output_path: str | None, overwrite: bool, pdf_timeout: int):
+@click.option("--template", "template_name", default=None, help="Template name or path to locate font directories for LibreOffice.")
+def to_pdf(docx_path: str, output_path: str | None, overwrite: bool, pdf_timeout: int, template_name: str | None):
     """Converts an existing DOCX document into a PDF document via headless LibreOffice."""
     raw_in = Path(docx_path)
     if raw_in.is_symlink() and not raw_in.exists():
@@ -473,11 +474,21 @@ def to_pdf(docx_path: str, output_path: str | None, overwrite: bool, pdf_timeout
             sys.exit(1)
 
     try:
+        font_dirs = None
+        if template_name:
+            try:
+                from md_to_docx.template import Template
+                tmpl = Template.load(template_name)
+                font_dirs = [Path(f) for f in (tmpl.font_files or {}).values() if f]
+                font_dirs = list({p.parent for p in font_dirs if p.parent.is_dir()}) or None
+            except Exception as tmpl_err:
+                click.echo(f"Warning: Could not load template '{template_name}': {tmpl_err}", err=True)
         saved = convert_docx_to_pdf(
             docx_path=in_file,
             output_pdf_path=out_file,
             timeout=pdf_timeout,
             overwrite=overwrite,
+            font_dirs=font_dirs,
         )
         click.echo(f"Success: Generated PDF at '{saved}'")
     except LibreOfficeNotFoundError as e:

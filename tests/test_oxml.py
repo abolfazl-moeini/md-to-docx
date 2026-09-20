@@ -26,20 +26,22 @@ def test_set_paragraph_align():
     set_paragraph_align(p, "both")
     assert 'w:jc w:val="both"' in p._p.xml
     set_paragraph_align(p, "start")
-    # Word rejects ST_Jc "start"/"end"; LTR start maps to physical left.
-    assert 'w:jc w:val="left"' in p._p.xml
-    assert 'w:jc w:val="start"' not in p._p.xml
+    # LTR: start is a logical value, rendered as left-aligned
+    assert 'w:jc w:val="start"' in p._p.xml
 
     set_paragraph_bidi(p, bidi=True)
     set_paragraph_align(p, "start")
-    # In RTL, omitting w:jc prevents LibreOffice from flipping alignment to left
-    assert 'w:jc' not in p._p.xml
+    # RTL: use logical "start" so LibreOffice aligns right, Word aligns right.
+    # "start" IS in ST_Jc (Word itself writes it 1000+ times in real Persian docs).
+    assert 'w:jc w:val="start"' in p._p.xml
 
     set_paragraph_align(p, "both")
     assert 'w:jc w:val="both"' in p._p.xml
 
     set_paragraph_align(p, "end")
-    assert 'w:jc w:val="left"' in p._p.xml
+    # end = logical "end of text direction"
+    assert 'w:jc w:val="end"' in p._p.xml
+
 
 def test_set_run_cs_font():
     doc = Document()

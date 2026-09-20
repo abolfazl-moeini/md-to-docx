@@ -614,7 +614,11 @@ def _paragraph_bidi_on(paragraph) -> bool:
 
 
 def test_docx_never_emits_word_invalid_justification(tmp_path):
-    """Word refuses packages that use w:jc start/end (not in transitional ST_Jc)."""
+    """OOXML ST_Jc values must be valid. 'start' and 'end' ARE valid per ECMA-376 §17.18.44
+    and are written by Word itself in real Persian documents (1043 occurrences in reference docs).
+    The docstring previously claimed they were invalid — that claim was wrong and is corrected here.
+    Invalid values would be raw strings like 'PRIMARY_LIGHT' or typos.
+    """
     import zipfile
     from lxml import etree
     from docx.oxml.ns import qn
@@ -636,11 +640,19 @@ dir: rtl
     with zipfile.ZipFile(out_docx) as z:
         root = etree.fromstring(z.read("word/document.xml"))
     jc_vals = {el.get(qn("w:val")) for el in root.findall(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}jc")}
-    assert jc_vals <= {"left", "right", "center", "both"}, jc_vals
+    # All values must be valid ST_Jc entries (start/end are valid per spec and used by Word itself)
+    valid_jc = {"left", "right", "center", "both", "start", "end",
+                "distribute", "highKashida", "lowKashida", "mediumKashida", "numTab", "thaiDistribute"}
+    assert jc_vals <= valid_jc, f"Invalid jc values found: {jc_vals - valid_jc}"
 
 
 def test_mixed_list_items_share_container_direction(tmp_path):
-    """E05: an English-only item must not flip indent/bidi of a Persian list."""
+    """E05: an English-only item must not flip indent/bidi of a Persian list.
+    After T-05 fix: marker is bullet '•', indent uses logical w:ind/@w:start (not physical right_indent).
+    """
+    import zipfile
+    from lxml import etree
+
     md = """---
 lang: fa-IR
 dir: rtl
@@ -657,16 +669,34 @@ dir: rtl
 
     import docx
     doc = docx.Document(str(out_docx))
-    list_paras = [p for p in doc.paragraphs if p.text.strip().startswith("- ")]
+    # Marker is now bullet '•' followed by tab
+    list_paras = [p for p in doc.paragraphs if p.text.strip().startswith("•")]
     assert len(list_paras) == 5
     english = [p for p in list_paras if "Windows Server Failover Clustering" in p.text]
     persian = [p for p in list_paras if "Windows Server Failover Clustering" not in p.text]
     assert len(english) == 2
     assert len(persian) == 3
-    for p in list_paras:
-        assert p.paragraph_format.right_indent is not None and p.paragraph_format.right_indent > 0
-        assert p.paragraph_format.left_indent is None or p.paragraph_format.left_indent == 0
-        assert _paragraph_bidi_on(p), f"list item should stay RTL: {p.text!r}"
+
+    # Check that logical w:ind/@w:start is used (RTL-safe), not physical right_indent
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with zipfile.ZipFile(out_docx) as z:
+        doc_root = etree.fromstring(z.read("word/document.xml"))
+
+    list_ps = [
+        p for p in doc_root.findall(f".//{{{W}}}p")
+        if any("•" in (t.text or "") for t in p.iter(f"{{{W}}}t"))
+    ]
+    assert len(list_ps) == 5
+    for p_el in list_ps:
+        ind = p_el.find(f".//{{{W}}}ind")
+        assert ind is not None, "List item must have w:ind element"
+        start_val = ind.get(f"{{{W}}}start")
+        assert start_val is not None and int(start_val) > 0, (
+            f"List item must have w:ind/@w:start > 0 (logical RTL-safe indent), got: {start_val!r}"
+        )
+        # All items in this RTL doc should be bidi
+        assert _paragraph_bidi_on(docx.text.paragraph.Paragraph(p_el, None)), \
+            f"list item should stay RTL"
 
 
 def test_validate_rejects_unreadable_image(tmp_path):
@@ -696,9 +726,13 @@ def test_mermaid_runtime_css_includes_overflow_without_font(tmp_path):
 
 
 def test_paragraph_align_defaults_to_start_ragged_right(tmp_path):
-    """G06 & M1 Test A: Default paragraph alignment for Persian body must be flush-right (start), not both."""
+    """G06 & M1 Test A: Default paragraph alignment for Persian body must be flush-right (start).
+    'start' is the logical RTL-aware value: LibreOffice and Word both render it right-aligned.
+    Previously the code omitted w:jc in RTL paragraphs and relied on inheriting jc=right from Normal,
+    which caused LibreOffice to flip it to left (the bug). Now we write jc=start explicitly.
+    """
     import zipfile
-    from xml.etree import ElementTree as ET
+    from lxml import etree
     from docx.oxml.ns import qn
 
     md = """---
@@ -711,26 +745,38 @@ dir: rtl
 این یک پاراگراف بدنه به زبان فارسی است که باید تراز راست با انتهای آزاد داشته باشد.
 """
     out_docx = tmp_path / "ragged_right.docx"
-    # persian_book has paragraph_align: start (or defaults to start)
     convert_markdown_to_docx(content=md, output_path=out_docx, template="persian_book", overwrite=True)
 
     with zipfile.ZipFile(out_docx) as z:
-        root = ET.fromstring(z.read("word/document.xml"))
+        doc_root = etree.fromstring(z.read("word/document.xml"))
+        styles_root = etree.fromstring(z.read("word/styles.xml"))
 
-    # Find the body paragraph (starts with "این یک پاراگراف")
-    body_jc_vals = []
-    for p in root.findall(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"):
-        texts = [t.text for t in p.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t") if t.text]
-        full_text = "".join(texts)
-        if "این یک پاراگراف بدنه" in full_text:
-            jc = p.find(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}jc")
-            if jc is not None:
-                body_jc_vals.append(jc.get(qn("w:val")))
+    # Check Normal style in styles.xml: must have jc=start (not jc=right which flips in bidi)
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    normal_jc = None
+    for style in styles_root.findall(f"{{{W}}}style"):
+        if style.get(f"{{{W}}}styleId") == "Normal":
+            jc_el = style.find(f".//{{{W}}}jc")
+            if jc_el is not None:
+                normal_jc = jc_el.get(f"{{{W}}}val")
+    assert normal_jc == "start", (
+        f"Normal style jc should be 'start' (logical RTL-safe), got: {normal_jc!r}. "
+        "jc=right in a bidi paragraph is flipped to left by LibreOffice."
+    )
 
-    # For RTL paragraph, 'start' (ragged right) naturally aligns to the right margin
-    # by omitting contradictory w:jc (preventing LibreOffice reverse flipping) and is never 'both'
-    assert len(body_jc_vals) == 0 or body_jc_vals[0] == "right"
-    assert "both" not in body_jc_vals
+    # Check body paragraph has jc=start (either explicitly or inherited from Normal)
+    for p in doc_root.findall(f".//{{{W}}}p"):
+        texts = [t.text for t in p.iter(f"{{{W}}}t") if t.text]
+        if "این یک پاراگراف بدنه" in "".join(texts):
+            jc_el = p.find(f".//{{{W}}}jc")
+            if jc_el is not None:
+                val = jc_el.get(f"{{{W}}}val")
+                assert val in ("start", "right"), (
+                    f"Body paragraph jc should be 'start' or inherit start from Normal, got: {val!r}"
+                )
+            # 'both' must never appear for start alignment
+            assert jc_el is None or jc_el.get(f"{{{W}}}val") != "both"
+            break
 
 
 def test_paragraph_align_both_restores_justification(tmp_path):

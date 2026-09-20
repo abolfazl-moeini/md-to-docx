@@ -406,33 +406,56 @@ def test_f10_console_code_keeps_every_line(tmp_path):
 
 
 def test_f10_list_uses_hanging_indent(tmp_path):
+    import zipfile
+    from lxml import etree
+
     md = "* آیتم فارسی یک\n* آیتم فارسی دو\n"
     out = tmp_path / "lst.docx"
     convert_markdown_to_docx(content=md, output_path=out, template="persian_book", overwrite=True)
-    import docx
-    doc = docx.Document(str(out))
+
+    # Check w:ind/@w:start (logical RTL-safe indent) is set correctly
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with zipfile.ZipFile(out) as z:
+        doc_root = etree.fromstring(z.read("word/document.xml"))
+
     found = False
-    for p in doc.paragraphs:
-        if "آیتم فارسی" in p.text:
+    for p_el in doc_root.findall(f".//{{{W}}}p"):
+        texts = [t.text for t in p_el.iter(f"{{{W}}}t") if t.text]
+        joined = "".join(texts)
+        if "آیتم فارسی" in joined:
             found = True
-            # In RTL lists, right_indent is set and negative hanging indent is omitted
-            # to prevent LibreOffice inverted hanging indent defect.
-            assert p.paragraph_format.right_indent is not None
-            assert p.paragraph_format.right_indent > 0
+            ind = p_el.find(f".//{{{W}}}ind")
+            assert ind is not None, "RTL list item must have w:ind"
+            start_val = ind.get(f"{{{W}}}start")
+            hanging_val = ind.get(f"{{{W}}}hanging")
+            assert start_val is not None and int(start_val) > 0, (
+                f"RTL list must use w:ind/@w:start > 0 (logical indent), got: {start_val!r}"
+            )
+            assert hanging_val is not None and int(hanging_val) > 0, (
+                f"RTL list must have w:ind/@w:hanging > 0 for proper wrap, got: {hanging_val!r}"
+            )
     assert found
 
-    # Verify LTR list preserves negative first_line_indent (hanging indent)
+    # Verify LTR list also uses start/hanging (same logical approach)
     md_ltr = "* English item one\n* English item two\n"
     out_ltr = tmp_path / "lst_ltr.docx"
     convert_markdown_to_docx(content=md_ltr, output_path=out_ltr, template="purple_book", overwrite=True)
-    doc_ltr = docx.Document(str(out_ltr))
+
+    with zipfile.ZipFile(out_ltr) as z:
+        doc_root_ltr = etree.fromstring(z.read("word/document.xml"))
+
     found_ltr = False
-    for p in doc_ltr.paragraphs:
-        if "English item" in p.text:
+    for p_el in doc_root_ltr.findall(f".//{{{W}}}p"):
+        texts = [t.text for t in p_el.iter(f"{{{W}}}t") if t.text]
+        joined = "".join(texts)
+        if "English item" in joined:
             found_ltr = True
-            assert p.paragraph_format.first_line_indent is not None
-            assert p.paragraph_format.first_line_indent < 0
+            ind = p_el.find(f".//{{{W}}}ind")
+            assert ind is not None, "LTR list item must have w:ind"
+            start_val = ind.get(f"{{{W}}}start")
+            assert start_val is not None and int(start_val) > 0
     assert found_ltr
+
 
 
 def test_f12_source_label_oracle_and_distinct_themes():

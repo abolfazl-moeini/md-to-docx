@@ -29,6 +29,8 @@ from md_to_docx.oxml import (
     set_cell_borders,
     set_paragraph_quote_border,
     set_paragraph_shading,
+    set_run_rtl,
+    set_paragraph_list_indent,
 )
 
 
@@ -866,7 +868,7 @@ def render_ast_table(
     set_table_column_widths(tbl, widths_dxa)
 
     tbl_cfg = renderer.template.tables or {}
-    border_col = renderer._resolve_color(tbl_cfg.get("border_color", "primary_light"))
+    border_col = renderer._resolve_color(tbl_cfg.get("border_color", "primary"))
     border_sz = int(tbl_cfg.get("border_sz", 4))
     border_spec = {"val": "single", "sz": border_sz, "color": border_col, "space": 0}
     subtle_hdr_border = {"val": "single", "sz": 4, "color": border_col, "space": 0}
@@ -1291,15 +1293,15 @@ def render_block(
                     set_paragraph_align(p, "start")
                     p.paragraph_format.line_spacing = renderer._line_spacing()
                     p.paragraph_format.space_after = Pt(2)
-                    indent = Inches(0.25 * (list_level + 1))
-                    if this_rtl:
-                        p.paragraph_format.right_indent = indent
-                    else:
-                        hanging = Inches(0.22)
-                        p.paragraph_format.left_indent = indent + hanging
-                        p.paragraph_format.first_line_indent = -hanging
+                    # Use logical start/hanging indent (RTL-safe, no direction branching needed)
+                    # Deeper nesting levels get progressively larger indent
+                    start_dxa = int(360 * (list_level + 1))
+                    set_paragraph_list_indent(p, start_dxa=start_dxa, hanging_dxa=360)
                     if blk_idx == 0:
-                        r_mark = p.add_run("- ")
+                        # Use bullet • for unordered lists (better typography than hyphen)
+                        r_mark = p.add_run("•\t")
+                        if this_rtl:
+                            set_run_rtl(r_mark)
                         set_run_cs_font(r_mark, font_name=renderer.template.fonts.get("body", "Vazirmatn"), size_pt=renderer.body_font_size_pt)
                     emit_inlines(blk.get("c", []), renderer, p, font_size_pt=renderer.body_font_size_pt)
                 else:
@@ -1311,6 +1313,7 @@ def render_block(
                         list_level=list_level + 1,
                         list_bidi=this_rtl,
                     )
+
 
     elif t == "OrderedList":
         attr = c[0] if c else [1, {"t": "Decimal"}, {"t": "Period"}]
@@ -1338,16 +1341,14 @@ def render_block(
                     set_paragraph_align(p, "start")
                     p.paragraph_format.line_spacing = renderer._line_spacing()
                     p.paragraph_format.space_after = Pt(2)
-                    indent = Inches(0.25 * (list_level + 1))
-                    if this_rtl:
-                        p.paragraph_format.right_indent = indent
-                    else:
-                        hanging = Inches(0.22)
-                        p.paragraph_format.left_indent = indent + hanging
-                        p.paragraph_format.first_line_indent = -hanging
+                    # Use logical start/hanging indent (RTL-safe)
+                    start_dxa = int(360 * (list_level + 1))
+                    set_paragraph_list_indent(p, start_dxa=start_dxa, hanging_dxa=360)
                     if blk_idx == 0:
                         disp_marker = format_ordered_marker(current_num, style, delim, this_rtl)
-                        r_mark = p.add_run(f"{disp_marker} ")
+                        r_mark = p.add_run(f"{disp_marker}\t")
+                        if this_rtl:
+                            set_run_rtl(r_mark)
                         set_run_cs_font(r_mark, font_name=renderer.template.fonts.get("body", "Vazirmatn"), size_pt=renderer.body_font_size_pt)
                     emit_inlines(blk.get("c", []), renderer, p, font_size_pt=renderer.body_font_size_pt)
                 else:
@@ -1359,6 +1360,7 @@ def render_block(
                         list_level=list_level + 1,
                         list_bidi=this_rtl,
                     )
+
 
     elif t == "DefinitionList":
         for i, item in enumerate(c):
