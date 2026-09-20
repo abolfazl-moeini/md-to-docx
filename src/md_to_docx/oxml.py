@@ -21,16 +21,28 @@ def _paragraph_is_rtl(paragraph: Paragraph) -> bool:
 
 
 def word_safe_jc(align: str, rtl: bool) -> str:
-    """Map logical alignment to valid ST_Jc values.
+    """Map a logical alignment request onto an ``ST_Jc`` value (ECMA-376 §17.18.44).
 
-    ``start`` and ``end`` ARE valid ST_Jc values per ECMA-376 §17.18.44.
-    Word itself writes ``start`` in Persian/Arabic documents (verified in 15 real Word files).
-    The previous docstring claiming Word rejects them was incorrect.
+    ``start`` and ``end`` ARE valid ``ST_Jc`` values, and Word itself writes ``start`` in
+    Persian/Arabic documents: the value occurs in 1020 of 3350 real ``.docx`` files on this
+    machine, including files whose ``docProps/app.xml`` names Microsoft Word. The earlier
+    docstring claiming Word rejects them was incorrect.
 
-    Using ``start``/``end`` is preferred over physical ``right``/``left`` because:
-    - ``start`` means "beginning of text direction" — right in RTL, left in LTR.
-    - Physical ``right`` in a ``w:bidi`` paragraph is interpreted as the LEFT edge by
-      both LibreOffice and Word (per MS-OE376 §2.3.1.13), causing text to appear left-aligned.
+    ``start``/``end`` are preferred over the physical ``right``/``left`` because they are
+    unambiguous under bidi:
+
+    - ``start`` means "beginning of the text direction" -- the right edge in RTL, the left
+      edge in LTR. It cannot be read the wrong way round.
+    - ``right`` is physical, and the engines disagree about it in a ``w:bidi`` paragraph.
+      LibreOffice resolves it as the logical END, i.e. the physical LEFT edge, so the text
+      renders left-aligned (reproduced locally with a single-variable render experiment).
+      Word's treatment of the same file was **not** verified here -- no Word build was run --
+      which is precisely the argument for ``start``: it is correct whichever way an engine
+      resolves the physical keywords.
+
+    Note the citation used here previously, "MS-OE376 §2.3.1.13", was a misattribution:
+    §2.3.1.13 is the **ECMA-376 Part 4** section number for ``jc``; MS-OE376 only adds
+    implementation notes on top of it.
     """
     raw = (align or "both").strip().lower()
     if raw in ("both", "justify"):
@@ -57,12 +69,12 @@ def set_paragraph_bidi(paragraph: Paragraph, bidi: bool = True) -> None:
 
 
 def set_paragraph_align(paragraph: Paragraph, align: str = "both") -> None:
-    """Sets paragraph justification using logical ST_Jc values (start/end/center/both/left/right).
+    """Sets paragraph justification, always emitting an explicit logical ``w:jc``.
 
-    Uses ``start``/``end`` for RTL-safe logical alignment. These ARE valid ST_Jc values
-    per ECMA-376 §17.18.44 and are written by Word itself in Persian documents.
-    Physical ``right`` in a bidi paragraph is interpreted as LEFT by LibreOffice/Word,
-    which is why it must never be written for RTL+start alignment.
+    An explicit element is written even when the value matches the inherited ``Normal``
+    style, so the alignment never depends on style inheritance. ``start``/``end`` are used
+    for RTL-safe logical alignment -- see :func:`word_safe_jc` for why the physical
+    ``right``/``left`` keywords must not be used for this.
     """
     pPr = paragraph._p.get_or_add_pPr()
     existing_jc = pPr.find(qn("w:jc"))
@@ -74,21 +86,43 @@ def set_paragraph_align(paragraph: Paragraph, align: str = "both") -> None:
     pPr.append(jc)
 
 
-def set_paragraph_list_indent(paragraph: Paragraph, start_dxa: int = 360, hanging_dxa: int = 360) -> None:
-    """Sets logical list indentation using w:ind/@w:start and @w:hanging.
+#: The complete attribute set of ``CT_Ind`` (ECMA-376 Part 4 §2.3.1.12, Part 1 §17.3.1.12).
+#: ``start``/``end`` are deliberately absent: those names exist as ``ST_Jc`` *values* on
+#: ``w:jc``, and as attributes on the Strict-conformance ``w:ind``, but not on the
+#: Transitional ``CT_Ind`` that every real Word document uses.
+CT_IND_ATTRIBUTES = frozenset({
+    "left", "leftChars", "right", "rightChars",
+    "hanging", "hangingChars", "firstLine", "firstLineChars",
+})
 
-    Uses logical attributes (start/hanging) instead of physical left/right so the
-    same XML works correctly in both RTL and LTR paragraphs without direction-specific logic.
-    - ``w:start``: distance from the leading margin (right in RTL, left in LTR).
-    - ``w:hanging``: how far the first line hangs back toward the margin (creates hanging indent).
-    This ensures multi-line items wrap under the text, not under the bullet marker.
+
+def set_paragraph_list_indent(paragraph: Paragraph, start_dxa: int = 360, hanging_dxa: int = 360) -> None:
+    """Indents a list paragraph from its logical START edge using ``w:ind/@w:left`` + ``@w:hanging``.
+
+    ``@w:left`` is direction-aware, so one attribute serves both writing directions and no
+    per-direction branch is needed. Normative text, ECMA-376 Part 4 §2.3.1.12: ``@w:left`` is
+    the distance between the left text margin and the left edge of the content "in a left to
+    right paragraph, and the **right** text margin and the **right** edge of that paragraph's
+    text in a right to left paragraph". ``@w:right`` is its mirror image, so indenting an RTL
+    list with ``@w:right`` produces *no* indent and pushes the bullet past the margin.
+
+    ``@w:hanging`` is likewise logical: it moves the first line "back towards the beginning of
+    the direction of text flow", so the marker sits at the margin and wrapped lines align under
+    the text rather than under the marker.
+
+    Do **not** emit ``@w:start`` here. It is not a member of ``CT_Ind`` (see
+    ``CT_IND_ATTRIBUTES``); Word never writes it -- it appears in 0 of 3350 real ``.docx``
+    files on this machine, whereas ``w:jc/@w:val="start"`` appears in 1020 of them. LibreOffice
+    accepts ``@w:start`` as an alias for ``@w:left`` and renders it identically (verified to
+    0.01 pt), so a ``@w:start`` document looks correct in local PDF export and diverges only
+    inside Word. That silent failure mode is exactly what this helper must avoid.
     """
     pPr = paragraph._p.get_or_add_pPr()
     existing_ind = pPr.find(qn("w:ind"))
     if existing_ind is not None:
         pPr.remove(existing_ind)
     ind = OxmlElement("w:ind")
-    ind.set(qn("w:start"), str(start_dxa))
+    ind.set(qn("w:left"), str(start_dxa))
     ind.set(qn("w:hanging"), str(hanging_dxa))
     pPr.append(ind)
 

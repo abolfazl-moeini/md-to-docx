@@ -406,55 +406,65 @@ def test_f10_console_code_keeps_every_line(tmp_path):
 
 
 def test_f10_list_uses_hanging_indent(tmp_path):
+    """RTL and LTR lists must indent from the logical START edge via w:ind/@w:left + @w:hanging.
+
+    @w:left is direction-aware (ECMA-376 Part 4 §2.3.1.12), so one attribute serves both
+    directions. @w:start is NOT a member of CT_Ind and must never be emitted: Word never
+    writes it (0 of 3350 real .docx files on this machine), while LibreOffice silently
+    accepts it as an alias for @w:left — so that mistake renders correctly in a local PDF
+    export and only surfaces inside Word.
+    """
     import zipfile
     from lxml import etree
+    from md_to_docx.oxml import CT_IND_ATTRIBUTES
+
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+    def _list_indents(docx_path, needle):
+        with zipfile.ZipFile(docx_path) as z:
+            doc_root = etree.fromstring(z.read("word/document.xml"))
+        seen = []
+        for p_el in doc_root.findall(f".//{{{W}}}p"):
+            joined = "".join(t.text or "" for t in p_el.iter(f"{{{W}}}t"))
+            if needle not in joined:
+                continue
+            ind = p_el.find(f".//{{{W}}}ind")
+            assert ind is not None, "List item must have w:ind"
+            attrs = {etree.QName(k).localname for k in ind.attrib}
+            illegal = attrs - CT_IND_ATTRIBUTES
+            assert not illegal, (
+                f"w:ind carries attributes outside CT_Ind: {sorted(illegal)}; "
+                f"allowed: {sorted(CT_IND_ATTRIBUTES)}"
+            )
+            seen.append(ind)
+        return seen
 
     md = "* آیتم فارسی یک\n* آیتم فارسی دو\n"
     out = tmp_path / "lst.docx"
     convert_markdown_to_docx(content=md, output_path=out, template="persian_book", overwrite=True)
 
-    # Check w:ind/@w:start (logical RTL-safe indent) is set correctly
-    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-    with zipfile.ZipFile(out) as z:
-        doc_root = etree.fromstring(z.read("word/document.xml"))
+    rtl_inds = _list_indents(out, "آیتم فارسی")
+    assert rtl_inds, "expected RTL list items"
+    for ind in rtl_inds:
+        start_val = ind.get(f"{{{W}}}left")
+        hanging_val = ind.get(f"{{{W}}}hanging")
+        assert start_val is not None and int(start_val) > 0, (
+            f"RTL list must use w:ind/@w:left > 0 (logical START indent), got: {start_val!r}"
+        )
+        assert hanging_val is not None and int(hanging_val) > 0, (
+            f"RTL list must have w:ind/@w:hanging > 0 for proper wrap, got: {hanging_val!r}"
+        )
 
-    found = False
-    for p_el in doc_root.findall(f".//{{{W}}}p"):
-        texts = [t.text for t in p_el.iter(f"{{{W}}}t") if t.text]
-        joined = "".join(texts)
-        if "آیتم فارسی" in joined:
-            found = True
-            ind = p_el.find(f".//{{{W}}}ind")
-            assert ind is not None, "RTL list item must have w:ind"
-            start_val = ind.get(f"{{{W}}}start")
-            hanging_val = ind.get(f"{{{W}}}hanging")
-            assert start_val is not None and int(start_val) > 0, (
-                f"RTL list must use w:ind/@w:start > 0 (logical indent), got: {start_val!r}"
-            )
-            assert hanging_val is not None and int(hanging_val) > 0, (
-                f"RTL list must have w:ind/@w:hanging > 0 for proper wrap, got: {hanging_val!r}"
-            )
-    assert found
-
-    # Verify LTR list also uses start/hanging (same logical approach)
+    # Verify LTR list uses the same logical approach
     md_ltr = "* English item one\n* English item two\n"
     out_ltr = tmp_path / "lst_ltr.docx"
     convert_markdown_to_docx(content=md_ltr, output_path=out_ltr, template="purple_book", overwrite=True)
 
-    with zipfile.ZipFile(out_ltr) as z:
-        doc_root_ltr = etree.fromstring(z.read("word/document.xml"))
-
-    found_ltr = False
-    for p_el in doc_root_ltr.findall(f".//{{{W}}}p"):
-        texts = [t.text for t in p_el.iter(f"{{{W}}}t") if t.text]
-        joined = "".join(texts)
-        if "English item" in joined:
-            found_ltr = True
-            ind = p_el.find(f".//{{{W}}}ind")
-            assert ind is not None, "LTR list item must have w:ind"
-            start_val = ind.get(f"{{{W}}}start")
-            assert start_val is not None and int(start_val) > 0
-    assert found_ltr
+    ltr_inds = _list_indents(out_ltr, "English item")
+    assert ltr_inds, "expected LTR list items"
+    for ind in ltr_inds:
+        start_val = ind.get(f"{{{W}}}left")
+        assert start_val is not None and int(start_val) > 0
 
 
 
