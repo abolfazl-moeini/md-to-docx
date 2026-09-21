@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "md-to-docx"
-version = "0.3.0"
+version = "0.4.0"
 description = "Persian / RTL Markdown + Mermaid to DOCX converter with custom templates"
 readme = "README.md"
 requires-python = ">=3.11"
