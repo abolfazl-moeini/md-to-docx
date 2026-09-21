@@ -648,7 +648,8 @@ dir: rtl
 
 def test_mixed_list_items_share_container_direction(tmp_path):
     """E05: an English-only item must not flip indent/bidi of a Persian list.
-    After T-05 fix: marker is bullet '•', indent uses logical w:ind/@w:start (not physical right_indent).
+    Lists indent from the logical START edge via w:ind/@w:left (direction-aware) plus
+    @w:hanging — never the physical right_indent, and never the non-CT_Ind @w:start.
     """
     import zipfile
     from lxml import etree
@@ -677,7 +678,9 @@ dir: rtl
     assert len(english) == 2
     assert len(persian) == 3
 
-    # Check that logical w:ind/@w:start is used (RTL-safe), not physical right_indent
+    # Indent must come from the logical START edge: w:ind/@w:left, plus @w:hanging.
+    # Any attribute outside CT_Ind (notably @w:start) is a Word-compatibility trap.
+    from md_to_docx.oxml import CT_IND_ATTRIBUTES
     W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     with zipfile.ZipFile(out_docx) as z:
         doc_root = etree.fromstring(z.read("word/document.xml"))
@@ -690,9 +693,15 @@ dir: rtl
     for p_el in list_ps:
         ind = p_el.find(f".//{{{W}}}ind")
         assert ind is not None, "List item must have w:ind element"
-        start_val = ind.get(f"{{{W}}}start")
+        attrs = {etree.QName(k).localname for k in ind.attrib}
+        illegal = attrs - CT_IND_ATTRIBUTES
+        assert not illegal, (
+            f"w:ind carries attributes outside CT_Ind: {sorted(illegal)}; "
+            f"allowed: {sorted(CT_IND_ATTRIBUTES)}"
+        )
+        start_val = ind.get(f"{{{W}}}left")
         assert start_val is not None and int(start_val) > 0, (
-            f"List item must have w:ind/@w:start > 0 (logical RTL-safe indent), got: {start_val!r}"
+            f"List item must have w:ind/@w:left > 0 (logical START indent), got: {start_val!r}"
         )
         # All items in this RTL doc should be bidi
         assert _paragraph_bidi_on(docx.text.paragraph.Paragraph(p_el, None)), \

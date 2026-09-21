@@ -43,4 +43,5 @@ markers = [
     "pandoc: tests that run actual pandoc binary",
     "integration: end-to-end integration tests with external binaries",
     "pdf: tests that require LibreOffice soffice binary",
+    "spec: OOXML schema-conformance tests (ECMA-376 / WordprocessingML)",
 ]

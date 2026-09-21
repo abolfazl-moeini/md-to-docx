@@ -167,23 +167,27 @@ def test_nested_lists_progressive_indentation():
     p_outer = doc.paragraphs[0]
     p_inner = doc.paragraphs[1]
 
-    # After T-05 fix: logical w:ind/@w:start is used (not physical right_indent/left_indent)
-    # Both paragraphs must have w:ind with start > 0; inner indent must be deeper than outer
-    from docx.oxml.ns import qn as _qn
+    # Lists indent from the logical START edge with w:ind/@w:left (which is direction-aware),
+    # together with @w:hanging. @w:start is NOT a CT_Ind attribute and must never appear;
+    # see md_to_docx.oxml.CT_IND_ATTRIBUTES for the authoritative allowlist.
+    from md_to_docx.oxml import CT_IND_ATTRIBUTES
     W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
     def get_start(p):
         ind = p._p.find(f".//{{{W}}}ind")
-        if ind is None:
-            return None
-        val = ind.get(f"{{{W}}}start")
+        assert ind is not None, "List item must have w:ind"
+        attrs = {etree.QName(k).localname for k in ind.attrib}
+        assert attrs <= CT_IND_ATTRIBUTES, (
+            f"w:ind carries attributes outside CT_Ind: {sorted(attrs - CT_IND_ATTRIBUTES)}"
+        )
+        val = ind.get(f"{{{W}}}left")
         return int(val) if val is not None else None
 
     outer_start = get_start(p_outer)
     inner_start = get_start(p_inner)
 
-    assert outer_start is not None, "Outer list item must have w:ind/@w:start"
-    assert inner_start is not None, "Inner list item must have w:ind/@w:start"
+    assert outer_start is not None, "Outer list item must have w:ind/@w:left"
+    assert inner_start is not None, "Inner list item must have w:ind/@w:left"
     assert inner_start > outer_start, (
         f"Inner list must be indented more than outer: inner={inner_start}, outer={outer_start}"
     )
