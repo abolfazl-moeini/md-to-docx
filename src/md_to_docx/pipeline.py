@@ -664,20 +664,7 @@ def convert_markdown_to_pdf(
         if tmpl.dir_path and (keep_docx_file == tmpl.dir_path or tmpl.dir_path in keep_docx_file.parents):
             raise ConvertError("Intermediate DOCX path cannot be inside the template directory.")
 
-    # Collect template font directories for LibreOffice discovery
-    font_dirs: list[Path] = []
-    if tmpl.dir_path:
-        t_fonts = tmpl.dir_path / "fonts"
-        if t_fonts.is_dir():
-            font_dirs.append(t_fonts)
-    if hasattr(tmpl, "font_files") and tmpl.font_files:
-        for fpath in tmpl.font_files.values():
-            try:
-                resolved = tmpl._resolve_path(fpath)
-                if resolved and resolved.parent.is_dir() and resolved.parent not in font_dirs:
-                    font_dirs.append(resolved.parent)
-            except Exception:
-                pass
+    font_dirs: list[Path] = tmpl.font_directories() if hasattr(tmpl, "font_directories") else []
 
     # 2. Stage conversion in an isolated temporary directory
     stage_parent = out_file.parent if out_file.parent.exists() and os.access(out_file.parent, os.W_OK) else None

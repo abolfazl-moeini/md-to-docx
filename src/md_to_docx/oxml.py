@@ -396,6 +396,19 @@ def set_table_column_widths(table: Table, widths_dxa: list[int]) -> None:
             tc_w.set(qn("w:type"), "dxa")
 
 
+def _indent_attr_for_physical_edge(side: str, rtl: bool) -> str:
+    """Attribute of ``w:ind`` that insets the given physical edge.
+
+    ``@w:left`` is the start edge: the left side in LTR and the right side in RTL
+    (ECMA-376 §17.3.1.12). A physical-right accent therefore needs ``@w:left`` on
+    an RTL paragraph and ``@w:right`` on an LTR paragraph.
+    """
+    physical = "right" if side == "right" else "left"
+    if rtl:
+        return "left" if physical == "right" else "right"
+    return physical
+
+
 def set_paragraph_quote_border(
     paragraph: Paragraph,
     color_hex: str = "6B2FA0",
@@ -403,7 +416,13 @@ def set_paragraph_quote_border(
     space: int = 15,
     side: str = "right",
 ) -> None:
-    """Sets thick physical border on a paragraph for blockquote callout (right for RTL, left for LTR)."""
+    """Sets a physical accent bar and insets the text so the bar does not cover glyphs.
+
+    ``w:pBdr/@w:space`` alone does not move the line box in LibreOffice, so a thick
+    bar (purple_book uses 12pt) paints on top of the last characters and reads as a
+    square. The gap is applied as ``w:ind`` instead, and the border's own space is
+    kept at 1pt so Word does not add the gap a second time.
+    """
     pPr = paragraph._p.get_or_add_pPr()
     pBdr = pPr.find(qn("w:pBdr"))
     if pBdr is None:
@@ -422,8 +441,16 @@ def set_paragraph_quote_border(
         pBdr.append(border_el)
     border_el.set(qn("w:val"), "single")
     border_el.set(qn("w:sz"), str(sz))
-    border_el.set(qn("w:space"), str(space))
+    border_el.set(qn("w:space"), "1")
     border_el.set(qn("w:color"), color_hex.lstrip("#"))
+
+    clearance_dxa = int(round((sz / 8.0 + float(space)) * 20))
+    ind_attr = _indent_attr_for_physical_edge(side, _paragraph_is_rtl(paragraph))
+    ind = pPr.find(qn("w:ind"))
+    if ind is None:
+        ind = OxmlElement("w:ind")
+        pPr.append(ind)
+    ind.set(qn(f"w:{ind_attr}"), str(clearance_dxa))
 
 
 def set_paragraph_keep(paragraph: Paragraph, keep_next: bool = False, keep_lines: bool = False) -> None:

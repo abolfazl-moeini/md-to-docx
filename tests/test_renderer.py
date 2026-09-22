@@ -125,6 +125,80 @@ def test_render_quote(renderer):
     assert 'w:fill="ECE4F1"' in xml
     # purple_book quotes.border_pt is 12 → OOXML sz is eighths of a point
     assert 'w:sz="96"' in xml
+    # The accent sits on the physical right. In an RTL paragraph that edge is
+    # w:ind/@w:left, and the inset must clear the 12pt bar plus the 15pt gap
+    # (27pt = 540 dxa). Without it the bar paints over the last glyphs.
+    ind = paragraphs[0]._p.find(qn("w:pPr")).find(qn("w:ind"))
+    assert ind is not None
+    assert int(ind.get(qn("w:left")) or "0") >= 540
+
+
+def test_heading_spacer_is_not_a_blank_line(renderer):
+    renderer.render_heading(HeadingInfo(level=1, number="۱.۰", title="عنوان", raw_text="۱.۰ عنوان"))
+    spacer = renderer.doc.paragraphs[-1]
+    assert spacer.text == ""
+    spacing = spacer._p.find(qn("w:pPr")).find(qn("w:spacing"))
+    assert spacing is not None
+    assert spacing.get(qn("w:lineRule")) == "exact"
+    assert int(spacing.get(qn("w:line"))) <= 40
+
+
+def test_list_marker_does_not_emit_a_tab(renderer):
+    from md_to_docx.pandoc_json import render_block
+
+    render_block(
+        {"t": "BulletList", "c": [[{"t": "Para", "c": [{"t": "Str", "c": "اتصال‌ها"}]}]]},
+        renderer,
+    )
+    render_block(
+        {
+            "t": "OrderedList",
+            "c": [
+                [1, {"t": "Decimal"}, {"t": "Period"}],
+                [[{"t": "Para", "c": [{"t": "Str", "c": "نخستین گام"}]}]],
+            ],
+        },
+        renderer,
+    )
+    for p in renderer.doc.paragraphs:
+        assert p._p.find(".//" + qn("w:tab")) is None
+        assert "\t" not in p.text
+
+
+def test_rtl_table_lines_up_latin_cells_and_uses_a_hairline_grid(tmp_path):
+    """A :--- column in an RTL table must not pin Latin cells to the physical left,
+    and the grid must not be painted in the primary purple."""
+    from md_to_docx import convert_markdown_to_docx
+
+    out = tmp_path / "table.docx"
+    convert_markdown_to_docx(
+        content="| مفهوم | نمونه |\n| :--- | :--- |\n| Login | DOMAIN |\n",
+        output_path=out,
+        template="purple_book",
+        base_dir=tmp_path,
+        overwrite=True,
+    )
+    doc = Document(str(out))
+    table = next(
+        tbl for tbl in doc.tables
+        if tbl._tbl.find(qn("w:tblPr")).find(qn("w:tblDescription")) is not None
+        and tbl._tbl.find(qn("w:tblPr")).find(qn("w:tblDescription")).get(qn("w:val")) == "data_table"
+    )
+    for row in table.rows:
+        for cell in row.cells:
+            pPr = cell.paragraphs[0]._p.find(qn("w:pPr"))
+            bidi = pPr.find(qn("w:bidi"))
+            jc = pPr.find(qn("w:jc"))
+            assert bidi is not None and bidi.get(qn("w:val"), "1") != "0"
+            assert jc is not None and jc.get(qn("w:val")) == "start"
+            border_colors = [
+                el.get(qn("w:color"))
+                for el in cell._tc.findall(".//" + qn("w:tcBorders") + "/*")
+            ]
+            assert border_colors
+            assert all(c.upper() != "6B2FA0" for c in border_colors)
+            assert all(c.upper() == "D8D8D8" for c in border_colors)
+
 
 def test_render_table(renderer):
     headers = ["مفهوم", "سطح معمول", "نمونه"]

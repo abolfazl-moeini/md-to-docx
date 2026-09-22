@@ -753,6 +753,36 @@ def _map_alignment(align_str: str) -> str:
     return ALIGN_MAP.get(align_str, "default")
 
 
+def _container_table_is_bidi(container: Any) -> bool:
+    """True when ``container`` is a cell of a table that has ``w:bidiVisual``."""
+    tc = getattr(container, "_tc", None)
+    if tc is None:
+        return False
+    node = tc.getparent()
+    tbl_tag = qn("w:tbl")
+    while node is not None and node.tag != tbl_tag:
+        node = node.getparent()
+    if node is None:
+        return False
+    tbl_pr = node.find(qn("w:tblPr"))
+    return tbl_pr is not None and tbl_pr.find(qn("w:bidiVisual")) is not None
+
+
+def _align_for_table_cell(default_align: Optional[str], table_rtl: bool, fallback: str) -> str:
+    """Map a Pandoc column alignment onto a logical ``w:jc`` for this table.
+
+    ``:---`` is Pandoc ``AlignLeft``. Inside a bidiVisual table, a physical
+    ``left`` pins Latin cells to the left edge while Persian cells (whose
+    paragraph is bidi) sit on the right, so each column zigzags. Logical
+    ``start`` puts both scripts on the same edge.
+    """
+    if not table_rtl:
+        if default_align in ("left", "right", "center"):
+            return default_align
+        return fallback
+    return {"left": "start", "right": "end", "center": "center"}.get(default_align or "", "start")
+
+
 
 def render_ast_table(
     table_c: List[Any],
@@ -868,7 +898,9 @@ def render_ast_table(
     set_table_column_widths(tbl, widths_dxa)
 
     tbl_cfg = renderer.template.tables or {}
-    border_col = renderer._resolve_color(tbl_cfg.get("border_color", "primary"))
+    # Hairline neutral grid. ``primary`` here painted every cell edge purple,
+    # which reads as a heavy frame rather than the reference hairline table.
+    border_col = renderer._resolve_color(tbl_cfg.get("border_color", "D8D8D8"))
     border_sz = int(tbl_cfg.get("border_sz", 4))
     border_spec = {"val": "single", "sz": border_sz, "color": border_col, "space": 0}
     subtle_hdr_border = {"val": "single", "sz": 4, "color": border_col, "space": 0}
@@ -942,12 +974,8 @@ def render_ast_table(
             color_hex=renderer.template.colors.get("caption", "5A5A5A"),
         )
 
-    # Spacing after table
     if container is None:
-        spacer = renderer.doc.add_paragraph()
-        spacer.text = ""
-        spacer.paragraph_format.space_before = Pt(0)
-        spacer.paragraph_format.space_after = Pt(6)
+        renderer.add_vertical_spacer(6)
 
 
 def _collect_list_item_texts(items: List[Any]) -> str:
@@ -1161,12 +1189,10 @@ def render_block(
 
             if container is not None:
                 p = container.paragraphs[0] if (len(container.paragraphs) == 1 and container.paragraphs[0].text == "") else container.add_paragraph()
-                is_rtl = contains_persian(text) if renderer.effective_direction == "rtl" else False
+                table_rtl = _container_table_is_bidi(container)
+                is_rtl = table_rtl or (contains_persian(text) if renderer.effective_direction == "rtl" else False)
                 set_paragraph_bidi(p, bidi=is_rtl)
-                if default_align in ("left", "right", "center"):
-                    set_paragraph_align(p, default_align)
-                else:
-                    set_paragraph_align(p, renderer.paragraph_align)
+                set_paragraph_align(p, _align_for_table_cell(default_align, table_rtl, renderer.paragraph_align))
                 p.paragraph_format.line_spacing = 1.15
                 p.paragraph_format.space_after = Pt(4)
                 fg_col = renderer._resolve_color((renderer.template.tables or {}).get("header_fg", "on_primary")) if is_header else None
@@ -1298,8 +1324,9 @@ def render_block(
                     start_dxa = int(360 * (list_level + 1))
                     set_paragraph_list_indent(p, start_dxa=start_dxa, hanging_dxa=360)
                     if blk_idx == 0:
-                        # Use bullet • for unordered lists (better typography than hyphen)
-                        r_mark = p.add_run("•\t")
+                        # Space, not tab: a tab without a tab stop jumps to Word's
+                        # 0.5" default and the wrapped line no longer meets the text.
+                        r_mark = p.add_run("• ")
                         if this_rtl:
                             set_run_rtl(r_mark)
                         set_run_cs_font(r_mark, font_name=renderer.template.fonts.get("body", "Vazirmatn"), size_pt=renderer.body_font_size_pt)
@@ -1346,7 +1373,7 @@ def render_block(
                     set_paragraph_list_indent(p, start_dxa=start_dxa, hanging_dxa=360)
                     if blk_idx == 0:
                         disp_marker = format_ordered_marker(current_num, style, delim, this_rtl)
-                        r_mark = p.add_run(f"{disp_marker}\t")
+                        r_mark = p.add_run(f"{disp_marker} ")
                         if this_rtl:
                             set_run_rtl(r_mark)
                         set_run_cs_font(r_mark, font_name=renderer.template.fonts.get("body", "Vazirmatn"), size_pt=renderer.body_font_size_pt)

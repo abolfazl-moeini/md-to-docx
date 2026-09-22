@@ -149,6 +149,22 @@ class Template:
             )
         return target
 
+    def font_directories(self) -> list[Path]:
+        """Directories LibreOffice should search so template faces (e.g. Vazirmatn) embed in PDF."""
+        found: list[Path] = []
+        if self.dir_path:
+            bundled = self.dir_path / "fonts"
+            if bundled.is_dir():
+                found.append(bundled)
+        for rel in (self.font_files or {}).values():
+            try:
+                resolved = self._resolve_path(rel)
+            except TemplateError:
+                continue
+            if resolved and resolved.parent.is_dir() and resolved.parent not in found:
+                found.append(resolved.parent)
+        return found
+
     def _validate(self) -> None:
         if self.raw_config.get("schema_version") != 1:
             raise TemplateValidationError(
@@ -310,7 +326,7 @@ class Template:
                 raise TemplateValidationError("Field 'tables' must be a mapping")
             if "bidi_visual" in tables and not isinstance(tables["bidi_visual"], bool):
                 raise TemplateValidationError("Field 'tables.bidi_visual' must be a boolean")
-            for tfield in ("header_bg", "header_fg"):
+            for tfield in ("header_bg", "header_fg", "border_color"):
                 if tfield in tables:
                     tval = str(tables[tfield])
                     if not (HEX_COLOR_RE.match(tval) or tval in colors):

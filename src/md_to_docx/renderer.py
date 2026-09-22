@@ -471,6 +471,14 @@ class DocxRenderer:
             return False
         return True
 
+    def add_vertical_spacer(self, after_pt: float = 6.0) -> Paragraph:
+        """Gap between blocks. An exact 1pt line keeps the spacer from consuming a text line."""
+        p = self.doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(after_pt)
+        p.paragraph_format.line_spacing = Pt(1)
+        return p
+
     def begin_paragraph(self, sample_text: str = "", align: Optional[str] = None) -> Paragraph:
         p = self.doc.add_paragraph()
         set_paragraph_bidi(p, bidi=self.resolve_paragraph_bidi(sample_text))
@@ -612,11 +620,7 @@ class DocxRenderer:
                     font_name=heading_font,
                 )
 
-            # Spacing after heading table
-            after_p = self.doc.add_paragraph()
-            after_p.paragraph_format.space_before = Pt(0)
-            after_p.paragraph_format.space_after = Pt(6)
-            after_p.text = ""
+            after_p = self.add_vertical_spacer(6)
             set_paragraph_keep(after_p, keep_next=True)
             return tbl
 
@@ -783,12 +787,8 @@ class DocxRenderer:
                 self.render_paragraph(str(item), align=self.paragraph_align, font_size_pt=10.5, target_p=target_p)
                 rendered_count += 1
 
-        # Trailing spacing
         if container is None:
-            spacer = self.doc.add_paragraph()
-            spacer.text = ""
-            spacer.paragraph_format.space_before = Pt(0)
-            spacer.paragraph_format.space_after = Pt(6)
+            self.add_vertical_spacer(6)
         return tbl
 
     def render_quote(self, paragraphs: List[str], container: Optional[Any] = None) -> List[Paragraph]:
@@ -822,10 +822,10 @@ class DocxRenderer:
         # Use logical start/hanging indent: works correctly in both RTL and LTR
         # without direction-specific branching (resolves defect F-09 / disagreement #2)
         set_paragraph_list_indent(p, start_dxa=360, hanging_dxa=360)
-        # Use bullet character instead of hyphen for better typography
+        # A tab without a matching tab stop jumps to Word's 0.5" default and
+        # misaligns the wrapped line. A space stays inside the hanging indent.
         bullet_char = "•"
-        # Render marker run with proper RTL/CS attributes
-        marker_run = p.add_run(bullet_char + "\t")
+        marker_run = p.add_run(bullet_char + " ")
         if is_rtl:
             set_run_rtl(marker_run)
         set_run_cs_font(
@@ -1104,12 +1104,8 @@ class DocxRenderer:
                 color_hex=self.template.colors.get("caption", "5A5A5A"),
             )
 
-        # Spacing after table (only for top-level document tables)
         if container is None:
-            spacer = self.doc.add_paragraph()
-            spacer.text = ""
-            spacer.paragraph_format.space_before = Pt(0)
-            spacer.paragraph_format.space_after = Pt(6)
+            self.add_vertical_spacer(6)
         return tbl
 
     def _fit_image_size(
@@ -1440,11 +1436,7 @@ class DocxRenderer:
                 )
                 set_run_rtl(r, False)
 
-        # Spacing after code block
         if container is None:
-            spacer = self.doc.add_paragraph()
-            spacer.text = ""
-            spacer.paragraph_format.space_before = Pt(0)
-            spacer.paragraph_format.space_after = Pt(6)
+            self.add_vertical_spacer(6)
 
         return tbl

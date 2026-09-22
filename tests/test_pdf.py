@@ -464,6 +464,34 @@ def test_cli_to_pdf_success_mocked(runner, tmp_path, mocker):
     assert "Success: Generated PDF" in result.output
 
 
+def test_cli_to_pdf_default_template_resolves_vazirmatn(runner, tmp_path, mocker):
+    in_docx = tmp_path / "doc.docx"
+    in_docx.write_bytes(b"PK\x03\x04")
+    out_pdf = tmp_path / "doc.pdf"
+    mock = mocker.patch("md_to_docx.cli.convert_docx_to_pdf", return_value=out_pdf)
+
+    result = runner.invoke(main, ["to-pdf", str(in_docx), "-o", str(out_pdf), "-f"])
+    assert result.exit_code == 0, result.output
+    font_dirs = mock.call_args.kwargs.get("font_dirs") or []
+    assert any((Path(d) / "Vazirmatn-Regular.ttf").is_file() for d in font_dirs)
+
+
+def test_cli_to_pdf_template_resolves_font_dir(runner, tmp_path, mocker):
+    """--template must point LibreOffice at the template font folder, not a relative fonts/ path."""
+    in_docx = tmp_path / "doc.docx"
+    in_docx.write_bytes(b"PK\x03\x04")
+    out_pdf = tmp_path / "doc.pdf"
+    mock = mocker.patch("md_to_docx.cli.convert_docx_to_pdf", return_value=out_pdf)
+
+    result = runner.invoke(
+        main,
+        ["to-pdf", str(in_docx), "-o", str(out_pdf), "--template", "purple_book", "-f"],
+    )
+    assert result.exit_code == 0, result.output
+    font_dirs = mock.call_args.kwargs.get("font_dirs") or []
+    assert any((Path(d) / "Vazirmatn-Regular.ttf").is_file() for d in font_dirs)
+
+
 def test_cli_convert_stdin_to_pdf_success_mocked(runner, tmp_path, mocker):
     out_pdf = tmp_path / "from_stdin.pdf"
     mocker.patch("md_to_docx.cli.convert_markdown_to_pdf", return_value=out_pdf)
