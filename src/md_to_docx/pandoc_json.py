@@ -44,6 +44,95 @@ CAPTION_STANDALONE_RE = re.compile(
     re.IGNORECASE,
 )
 
+def _image_inlines(block: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not isinstance(block, dict) or block.get("t") not in ("Para", "Plain"):
+        return []
+    content = block.get("c") or []
+    if not isinstance(content, list):
+        return []
+    return [inl for inl in content if isinstance(inl, dict) and inl.get("t") == "Image"]
+
+
+def _is_image_only_block(block: Dict[str, Any]) -> bool:
+    images = _image_inlines(block)
+    if len(images) != 1:
+        return False
+    content = block.get("c") or []
+    others = [
+        inl for inl in content
+        if isinstance(inl, dict) and inl.get("t") not in ("Image", "Space", "SoftBreak", "LineBreak")
+    ]
+    return not others
+
+
+def _following_caption_text(block: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(block, dict) or block.get("t") not in ("Para", "Plain"):
+        return None
+    text = inlines_to_text(block.get("c") or []).strip()
+    if text and (CAPTION_RE.match(text) or CAPTION_STANDALONE_RE.match(text)):
+        return text
+    return None
+
+
+def _set_image_title(image: Dict[str, Any], title: str) -> None:
+    content = image.get("c")
+    if not isinstance(content, list) or len(content) < 3 or not isinstance(content[2], list):
+        return
+    target = content[2]
+    existing = target[1] if len(target) > 1 and isinstance(target[1], str) else ""
+    if existing.strip():
+        return
+    if len(target) == 1:
+        target.append(title)
+    else:
+        target[1] = title
+
+
+def _walk_block_lists(block: Dict[str, Any]) -> None:
+    kind = block.get("t")
+    content = block.get("c")
+    if kind == "Div" and isinstance(content, list) and len(content) > 1 and isinstance(content[1], list):
+        attach_following_image_captions(content[1])
+    elif kind == "BlockQuote" and isinstance(content, list):
+        attach_following_image_captions(content)
+    elif kind == "BulletList" and isinstance(content, list):
+        for item in content:
+            if isinstance(item, list):
+                attach_following_image_captions(item)
+    elif kind == "OrderedList" and isinstance(content, list) and len(content) > 1 and isinstance(content[1], list):
+        for item in content[1]:
+            if isinstance(item, list):
+                attach_following_image_captions(item)
+
+
+def attach_following_image_captions(blocks: List[Any]) -> None:
+    """Bind a following ``شکل`` / ``Figure`` paragraph to the image it captions.
+
+    Mermaid already does this. A plain image left the caption as a standalone
+    paragraph, so it never received the Caption style.
+    """
+    if not isinstance(blocks, list):
+        return
+    index = 0
+    while index < len(blocks):
+        block = blocks[index]
+        if isinstance(block, dict):
+            _walk_block_lists(block)
+        if (
+            isinstance(block, dict)
+            and _is_image_only_block(block)
+            and index + 1 < len(blocks)
+            and isinstance(blocks[index + 1], dict)
+        ):
+            caption = _following_caption_text(blocks[index + 1])
+            if caption:
+                _set_image_title(_image_inlines(block)[0], caption)
+                del blocks[index + 1]
+                index += 1
+                continue
+        index += 1
+
+
 def _inline_size(renderer: DocxRenderer, default: float = 10.5) -> float:
     nested = getattr(renderer, "_content_font_size_pt", None)
     return float(nested) if nested is not None else default
@@ -964,6 +1053,7 @@ def render_ast_table(
         is_rtl_cap = contains_persian(caption) if renderer.effective_direction == "rtl" else False
         set_paragraph_bidi(p_cap, bidi=is_rtl_cap)
         set_paragraph_align(p_cap, "center")
+        renderer.bind_paragraph_role(p_cap, "caption")
         p_cap.paragraph_format.space_before = Pt(4)
         p_cap.paragraph_format.space_after = Pt(8)
         renderer.append_text(
@@ -1056,6 +1146,7 @@ def render_block(
             set_paragraph_bidi(p, bidi=is_rtl)
             set_paragraph_align(p, "start")
             renderer._set_heading_outline(p, level)
+            renderer.bind_paragraph_role(p, "heading", level)
             p.paragraph_format.space_before = Pt(4)
             p.paragraph_format.space_after = Pt(2)
             with renderer.font_role("heading"):
@@ -1181,6 +1272,7 @@ def render_block(
                 is_rtl = renderer.resolve_paragraph_bidi(text)
                 set_paragraph_bidi(p, bidi=is_rtl)
                 set_paragraph_align(p, "center")
+                renderer.bind_paragraph_role(p, "caption")
                 p.paragraph_format.space_before = Pt(4)
                 p.paragraph_format.space_after = Pt(8)
                 cap_color = renderer._resolve_color(renderer.template.colors.get("caption", "5A5A5A"))
@@ -1218,6 +1310,7 @@ def render_block(
                     is_rtl = contains_persian(txt) if renderer.effective_direction == "rtl" else False
                     set_paragraph_bidi(p, bidi=is_rtl)
                     set_paragraph_align(p, renderer.paragraph_align)
+                    renderer.bind_paragraph_role(p, "quote")
                     quote_cfg = renderer.template.quotes or {}
                     border_color = renderer._resolve_color(quote_cfg.get("border_color", "primary"))
                     quote_bg = renderer._resolve_color(quote_cfg.get("bg", "quote_bg"))
@@ -1663,7 +1756,9 @@ def ast_to_docx(ast_dict: Dict[str, Any], renderer: DocxRenderer) -> Document:
         renderer.insert_toc_field()
 
     blocks = ast_dict.get("blocks", [])
+    attach_following_image_captions(blocks)
     for idx, block in enumerate(blocks):
         render_block(block, renderer, container=None, path=f"root.blocks[{idx}]")
+    renderer.normalize_output()
     return renderer.doc
 

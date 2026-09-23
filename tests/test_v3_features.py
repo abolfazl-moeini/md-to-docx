@@ -243,7 +243,7 @@ x = 42
 
 
 def test_v3_02_rfonts_east_asia_and_cs_attributes(tmp_path):
-    """Run fonts must properly set ascii, hAnsi, cs, and eastAsia."""
+    """Complex-script face is set. eastAsia is left unset: Vazirmatn has no CJK glyphs."""
     md = "متن فارسی نمونه.\n"
     out = tmp_path / "rfonts_check.docx"
     convert_markdown_to_docx(content=md, output_path=out, template="purple_book", overwrite=True)
@@ -260,7 +260,7 @@ def test_v3_02_rfonts_east_asia_and_cs_attributes(tmp_path):
         ea = rFonts.get(f"{W}eastAsia")
         if cs == "Vazirmatn":
             found_rfonts = True
-            assert ea == "Vazirmatn"
+            assert ea is None
 
     assert found_rfonts
 

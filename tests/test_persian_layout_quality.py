@@ -217,6 +217,7 @@ dir: rtl
             # Check paragraph alignment is center
             from docx.enum.text import WD_ALIGN_PARAGRAPH
             assert p.alignment == WD_ALIGN_PARAGRAPH.CENTER
+            assert p.style.style_id == "Caption"
     assert found_caption
 
 
@@ -545,7 +546,8 @@ GO
         for item in zin.infolist():
             data = zin.read(item.filename)
             if item.filename == "word/document.xml":
-                data = data.replace(b"<w:t>Engine</w:t>", b"")
+                # The Latin phrase is one run, so Engine is not its own w:t element.
+                data = data.replace("Engine".encode("utf-8"), b"")
             zout.writestr(item, data)
     c1_ok, c1_issues = run_content_oracle(c1_docx, manifest_entry)
     assert not c1_ok, "Oracle failed to detect paragraph deletion"
@@ -569,7 +571,8 @@ GO
         for item in zin.infolist():
             data = zin.read(item.filename)
             if item.filename == "word/document.xml":
-                data = data.replace("<w:t>داده</w:t>".encode("utf-8"), b"")
+                # Cell text is one run ("داده ۱"), not a w:t that holds only داده.
+                data = data.replace("داده".encode("utf-8"), b"")
             zout.writestr(item, data)
     c3_ok, c3_issues = run_content_oracle(c3_docx, manifest_entry)
     assert not c3_ok, "Oracle failed to detect table column corruption"

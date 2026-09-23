@@ -45,6 +45,10 @@ from md_to_docx.oxml import (
     set_table_column_widths,
     set_doc_bidi,
     set_paragraph_keep,
+    set_paragraph_style_id,
+    set_theme_font_lang,
+    normalize_document,
+    normalize_markup_tree,
 )
 from md_to_docx.paths import resolve_image_source
 
@@ -228,6 +232,7 @@ class DocxRenderer:
                         p_bidi = contains_persian(p_text) if not is_rtl else (not is_pure_latin(p_text) or contains_persian(p_text))
                         set_paragraph_bidi(p, bidi=p_bidi)
         self._setup_normal_style()
+        set_theme_font_lang(self.doc, self.template.language_latin, self.template.language_bidi)
         # YAML page size/margins win over shell geometry (FIN-10 / FIN-02)
         self._apply_page_geometry()
 
@@ -240,7 +245,9 @@ class DocxRenderer:
         rFonts.set(qn("w:ascii"), latin_font)
         rFonts.set(qn("w:hAnsi"), latin_font)
         rFonts.set(qn("w:cs"), body_font)
-        rFonts.set(qn("w:eastAsia"), body_font)
+        east_asia = qn("w:eastAsia")
+        if east_asia in rFonts.attrib:
+            del rFonts.attrib[east_asia]
         for tag in ("w:sz", "w:szCs"):
             el = rPr.find(qn(tag))
             if el is None:
@@ -266,6 +273,77 @@ class DocxRenderer:
             jc = OxmlElement("w:jc")
             pPr.append(jc)
         jc.set(qn("w:val"), word_safe_jc(self.paragraph_align, rtl=is_rtl))
+        self._ensure_semantic_styles()
+
+    def _paint_style(self, style, *, size_pt: float, bold: bool, color_hex: str) -> None:
+        from docx.shared import RGBColor
+
+        style.font.name = self.latin_font
+        style.font.size = Pt(size_pt)
+        style.font.bold = bold
+        style.font.color.rgb = RGBColor.from_string(color_hex)
+        rPr = style.element.get_or_add_rPr()
+        rFonts = rPr.get_or_add_rFonts()
+        rFonts.set(qn("w:cs"), self.body_font)
+        east_asia = qn("w:eastAsia")
+        if east_asia in rFonts.attrib:
+            del rFonts.attrib[east_asia]
+        pPr = style.element.get_or_add_pPr()
+        bidi_el = pPr.find(qn("w:bidi"))
+        if bidi_el is None:
+            bidi_el = OxmlElement("w:bidi")
+            pPr.append(bidi_el)
+        bidi_el.set(qn("w:val"), "1" if self.effective_direction != "ltr" else "0")
+
+    def _ensure_semantic_styles(self) -> None:
+        """Register paragraph styles Word can use for headings, quotes, captions, code, and notes.
+
+        Direct formatting on each paragraph stays in place, so the visible layout does not move.
+        """
+        from docx.enum.style import WD_STYLE_TYPE
+
+        body_color = self._resolve_color(self.template.colors.get("body", "2D2D2D"))
+        ids: dict[str, str] = {}
+        for level in range(1, 7):
+            style = self.doc.styles[f"Heading {level}"]
+            cfg = self.template.headings.get(f"h{level}", {}) if isinstance(self.template.headings, dict) else {}
+            size = float(cfg.get("size_pt", 16 if level == 1 else 14 if level == 2 else 13))
+            self._paint_style(style, size_pt=size, bold=bool(cfg.get("bold", True)), color_hex=body_color)
+            ids[f"heading{level}"] = style.style_id
+        for name, key, size in (
+            ("Quote", "quote", 10.5),
+            ("Caption", "caption", self.caption_size_pt),
+        ):
+            style = self.doc.styles[name]
+            self._paint_style(style, size_pt=size, bold=False, color_hex=body_color)
+            ids[key] = style.style_id
+        for name, key, size in (
+            ("Footnote Text", "footnote", self.footnote_size_pt()),
+            ("Code Block", "code", float(self.template.code_block.get("font_size_pt", 9.5))),
+        ):
+            try:
+                style = self.doc.styles[name]
+            except KeyError:
+                style = self.doc.styles.add_style(name, WD_STYLE_TYPE.PARAGRAPH)
+            self._paint_style(style, size_pt=size, bold=False, color_hex=body_color)
+            ids[key] = style.style_id
+        self._role_style_ids = ids
+
+    def bind_paragraph_role(self, paragraph: Paragraph, role: str, level: int = 1) -> None:
+        ids = getattr(self, "_role_style_ids", None) or {}
+        key = f"heading{max(1, min(level, 6))}" if role == "heading" else role
+        style_id = ids.get(key)
+        if style_id:
+            set_paragraph_style_id(paragraph, style_id)
+
+    def normalize_output(self) -> None:
+        normalize_document(
+            self.doc,
+            cs_font=self.body_font,
+            latin_font=self.latin_font,
+            bidi_lang=self.template.language_bidi,
+            latin_lang=self.template.language_latin,
+        )
 
     @property
     def paragraph_space_after_pt(self) -> float:
@@ -494,6 +572,7 @@ class DocxRenderer:
         quote_bg = self._resolve_color(quote_cfg.get("bg", "quote_bg"))
         border_sz = self.quote_border_sz()
         p = self.begin_paragraph(sample_text, align=self.paragraph_align)
+        self.bind_paragraph_role(p, "quote")
         border_side = self.quote_border_side()
         set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15, side=border_side)
         set_paragraph_shading(p, quote_bg)
@@ -603,6 +682,7 @@ class DocxRenderer:
             set_paragraph_align(p1, "start")
             set_paragraph_keep(p1, keep_next=True, keep_lines=True)
             self._set_heading_outline(p1, info.level)
+            self.bind_paragraph_role(p1, "heading", info.level)
 
             title_color = self._resolve_color(self.template.colors.get("body", "2D2D2D"))
             heading_bold = bool((self.template.headings or {}).get(f"h{info.level}", {}).get("bold", True))
@@ -633,6 +713,7 @@ class DocxRenderer:
         set_paragraph_align(p, "start")
         set_paragraph_bottom_border(p, color_hex=primary_color)
         self._set_heading_outline(p, info.level)
+        self.bind_paragraph_role(p, "heading", info.level)
         title_color = self._resolve_color(self.template.colors.get("body", "2D2D2D"))
         heading_bold = bool((self.template.headings or {}).get(f"h{info.level}", {}).get("bold", True))
         if title_inlines:
@@ -805,6 +886,7 @@ class DocxRenderer:
             is_rtl = self.effective_direction == "rtl" and (contains_persian(text) or not is_pure_latin(text))
             set_paragraph_bidi(p, bidi=is_rtl)
             set_paragraph_align(p, self.paragraph_align)
+            self.bind_paragraph_role(p, "quote")
             set_paragraph_quote_border(p, color_hex=border_color, sz=border_sz, space=15, side=border_side)
             set_paragraph_shading(p, quote_bg)
             self.render_paragraph(text, align=self.paragraph_align, font_size_pt=10.5, target_p=p)
@@ -956,8 +1038,36 @@ class DocxRenderer:
 
         part = _ensure_footnotes_part(self.doc)
         fid = next_footnote_id(part)
-        add_footnote_reference(paragraph, fid)
+        ref_run = add_footnote_reference(paragraph, fid)
+        set_run_cs_font(
+            ref_run,
+            font_name=self.latin_font,
+            size_pt=self.body_font_size_pt,
+            superscript=True,
+            bidi_lang=self.template.language_bidi,
+            latin_lang=self.template.language_latin,
+            cs_font_name=self.body_font,
+        )
+        ref_rtl = self.resolve_paragraph_bidi(paragraph.text)
+        set_run_rtl(ref_run, ref_rtl)
+        set_run_cs(ref_run, ref_rtl)
+        ref_rpr = ref_run._r.find(qn("w:rPr"))
+        if ref_rpr is not None and ref_run._r.index(ref_rpr) != 0:
+            ref_run._r.remove(ref_rpr)
+            ref_run._r.insert(0, ref_rpr)
         container, root = FootnoteContainer.create(self.doc, part, fid)
+        mark = container.first_paragraph.runs[0]
+        set_run_cs_font(
+            mark,
+            font_name=self.latin_font,
+            size_pt=self.footnote_size_pt(),
+            superscript=True,
+            bidi_lang=self.template.language_bidi,
+            latin_lang=self.template.language_latin,
+            cs_font_name=self.body_font,
+        )
+        set_run_rtl(mark, self.effective_direction != "ltr")
+        set_run_cs(mark, self.effective_direction != "ltr")
 
         prev_size = getattr(self, "_content_font_size_pt", None)
         self._content_font_size_pt = self.footnote_size_pt()
@@ -979,6 +1089,15 @@ class DocxRenderer:
         finally:
             self._content_font_size_pt = prev_size
 
+        for note_p in container.paragraphs:
+            self.bind_paragraph_role(note_p, "footnote")
+        normalize_markup_tree(
+            root,
+            cs_font=self.body_font,
+            latin_font=self.latin_font,
+            bidi_lang=self.template.language_bidi,
+            latin_lang=self.template.language_latin,
+        )
         part._blob = ET_to_bytes(root)
 
     def render_table(
@@ -1094,6 +1213,7 @@ class DocxRenderer:
             is_rtl_cap = contains_persian(caption) if self.effective_direction == "rtl" else False
             set_paragraph_bidi(p_cap, bidi=is_rtl_cap)
             set_paragraph_align(p_cap, "center")
+            self.bind_paragraph_role(p_cap, "caption")
             p_cap.paragraph_format.space_before = Pt(4)
             p_cap.paragraph_format.space_after = Pt(8)
             self.append_text(
@@ -1194,6 +1314,7 @@ class DocxRenderer:
             is_rtl_cap = contains_persian(caption) if self.effective_direction == "rtl" else False
             set_paragraph_bidi(p_cap, bidi=is_rtl_cap)
             set_paragraph_align(p_cap, "center")
+            self.bind_paragraph_role(p_cap, "caption")
             p_cap.paragraph_format.space_before = Pt(2)
             p_cap.paragraph_format.space_after = Pt(10)
 
@@ -1398,6 +1519,7 @@ class DocxRenderer:
             p = p_first if idx == 0 else cell.add_paragraph()
             set_paragraph_bidi(p, bidi=False)
             set_paragraph_align(p, "left")
+            self.bind_paragraph_role(p, "code")
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.line_spacing = line_spacing

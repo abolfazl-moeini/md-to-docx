@@ -1,5 +1,7 @@
 """OOXML helpers for RTL, Complex Script (CS) fonts, bidiVisual tables, and borders."""
 
+from copy import deepcopy
+
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
@@ -8,6 +10,147 @@ from docx.table import Table, _Cell
 from docx.document import Document
 
 NSMAP = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+_XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+# Child order of CT_RPr and CT_PPr from python-docx, which follows ECMA-376 xsd:sequence.
+# Inserting out of this order is what makes Word offer to repair the file.
+RPR_CHILD_ORDER = (
+    "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike",
+    "outline", "shadow", "emboss", "imprint", "noProof", "snapToGrid", "vanish", "webHidden",
+    "color", "spacing", "w", "kern", "position", "sz", "szCs", "highlight", "u", "effect",
+    "bdr", "shd", "fitText", "vertAlign", "rtl", "cs", "em", "lang", "eastAsianLayout",
+    "specVanish", "oMath",
+)
+PPR_CHILD_ORDER = (
+    "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr",
+    "suppressLineNumbers", "pBdr", "shd", "tabs", "suppressAutoHyphens", "kinsoku", "wordWrap",
+    "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN", "bidi", "adjustRightInd",
+    "snapToGrid", "spacing", "ind", "contextualSpacing", "mirrorIndents", "suppressOverlap",
+    "jc", "textDirection", "textAlignment", "textboxTightWrap", "outlineLvl", "divId",
+    "cnfStyle", "rPr", "sectPr", "pPrChange",
+)
+
+
+def _local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def reorder_children(parent, order: tuple[str, ...]) -> None:
+    """Stable-sort direct children into schema order. Unknown names stay at the end."""
+    if parent is None:
+        return
+    rank = {name: i for i, name in enumerate(order)}
+    children = list(parent)
+    ordered = [
+        el for _, el in sorted(
+            enumerate(children),
+            key=lambda pair: (rank.get(_local(pair[1].tag), 10_000), pair[0]),
+        )
+    ]
+    if ordered == children:
+        return
+    for el in children:
+        parent.remove(el)
+    for el in ordered:
+        parent.append(el)
+
+
+def _rpr_signature(rPr) -> tuple:
+    if rPr is None:
+        return ()
+    parts = []
+    for child in rPr:
+        attrs = tuple(sorted((_local(k), v) for k, v in child.attrib.items()))
+        parts.append((_local(child.tag), attrs, child.text or ""))
+    return tuple(parts)
+
+
+def _text_only_run(run_el) -> bool:
+    extras = [c for c in run_el if _local(c.tag) != "rPr"]
+    return len(extras) == 1 and _local(extras[0].tag) == "t"
+
+
+def _run_text(run_el) -> str:
+    return "".join((c.text or "") for c in run_el if _local(c.tag) == "t")
+
+
+def _set_run_text(run_el, text: str) -> None:
+    text_el = next(c for c in run_el if _local(c.tag) == "t")
+    text_el.text = text
+    if text[:1].isspace() or text[-1:].isspace() or "  " in text:
+        text_el.set(_XML_SPACE, "preserve")
+
+
+def _merge_run_pair(left, right) -> None:
+    _set_run_text(left, _run_text(left) + _run_text(right))
+    parent = left.getparent()
+    if parent is not None:
+        parent.remove(right)
+
+
+def _copy_rpr(src, dest_run) -> None:
+    existing = dest_run.find(qn("w:rPr"))
+    if existing is not None:
+        dest_run.remove(existing)
+    if src is None:
+        return
+    dest_run.insert(0, deepcopy(src))
+
+
+def coalesce_runs(parent) -> None:
+    """Merge adjacent runs that carry the same properties.
+
+    A whitespace-only run sitting between two identical runs is absorbed too, so
+    ``SQL Server`` stays one Latin run instead of three.
+    """
+    children = list(parent)
+    index = 0
+    while index < len(children):
+        child = children[index]
+        if _local(child.tag) == "hyperlink":
+            coalesce_runs(child)
+            index += 1
+            continue
+        if _local(child.tag) != "r":
+            index += 1
+            continue
+        end = index
+        while end < len(children) and _local(children[end].tag) == "r":
+            end += 1
+        runs = [el for el in children[index:end] if el.getparent() is not None]
+        changed = True
+        while changed and len(runs) > 1:
+            changed = False
+            cursor = 0
+            while cursor < len(runs) - 2:
+                left, mid, right = runs[cursor], runs[cursor + 1], runs[cursor + 2]
+                mid_text = _run_text(mid)
+                if (
+                    _text_only_run(left)
+                    and _text_only_run(mid)
+                    and _text_only_run(right)
+                    and mid_text.strip() == ""
+                    and mid_text != ""
+                    and _rpr_signature(left.find(qn("w:rPr"))) == _rpr_signature(right.find(qn("w:rPr")))
+                    and _rpr_signature(left.find(qn("w:rPr"))) != _rpr_signature(mid.find(qn("w:rPr")))
+                ):
+                    _copy_rpr(left.find(qn("w:rPr")), mid)
+                    changed = True
+                cursor += 1
+            cursor = 0
+            while cursor < len(runs) - 1:
+                left, right = runs[cursor], runs[cursor + 1]
+                if (
+                    _text_only_run(left)
+                    and _text_only_run(right)
+                    and _rpr_signature(left.find(qn("w:rPr"))) == _rpr_signature(right.find(qn("w:rPr")))
+                ):
+                    _merge_run_pair(left, right)
+                    del runs[cursor + 1]
+                    changed = True
+                    continue
+                cursor += 1
+        index = end
 
 
 def _paragraph_is_rtl(paragraph: Paragraph) -> bool:
@@ -156,7 +299,11 @@ def set_run_cs_font(
     rFonts.set(qn("w:ascii"), font_name)
     rFonts.set(qn("w:hAnsi"), font_name)
     rFonts.set(qn("w:cs"), effective_cs)
-    rFonts.set(qn("w:eastAsia"), effective_cs)
+    # Vazirmatn has no CJK glyphs. Leaving eastAsia pointed at it makes Word
+    # resolve East Asian text to a face that cannot draw it.
+    east_asia = qn("w:eastAsia")
+    if east_asia in rFonts.attrib:
+        del rFonts.attrib[east_asia]
 
     # Sizes in half-points (1 pt = 2 half-points)
     sz_val = str(int(round(size_pt * 2)))
@@ -227,6 +374,7 @@ def set_run_cs_font(
         rPr.append(lang)
     lang.set(qn("w:val"), latin_lang)
     lang.set(qn("w:bidi"), bidi_lang)
+    reorder_children(rPr, RPR_CHILD_ORDER)
 
 
 def set_run_rtl(run: Run, rtl: bool = True) -> None:
@@ -237,6 +385,7 @@ def set_run_rtl(run: Run, rtl: bool = True) -> None:
         existing = OxmlElement("w:rtl")
         rPr.append(existing)
     existing.set(qn("w:val"), "1" if rtl else "0")
+    reorder_children(rPr, RPR_CHILD_ORDER)
 
 
 def set_run_cs(run: Run, cs: bool = True) -> None:
@@ -247,6 +396,7 @@ def set_run_cs(run: Run, cs: bool = True) -> None:
         existing = OxmlElement("w:cs")
         rPr.append(existing)
     existing.set(qn("w:val"), "1" if cs else "0")
+    reorder_children(rPr, RPR_CHILD_ORDER)
 
 
 def set_table_bidi_visual(table: Table) -> None:
@@ -475,11 +625,120 @@ def set_doc_bidi(doc: Document, bidi: bool = True) -> None:
                 else:
                     sectPr.append(existing)
             existing.set(qn("w:val"), "1")
+            gutter = sectPr.find(qn("w:rtlGutter"))
+            if gutter is None:
+                gutter = OxmlElement("w:rtlGutter")
+                existing.addnext(gutter)
         else:
             if existing is not None:
                 existing.set(qn("w:val"), "0")
+            gutter = sectPr.find(qn("w:rtlGutter"))
+            if gutter is not None:
+                sectPr.remove(gutter)
 
     settings_el = doc.settings.element
     stray = settings_el.find(qn("w:bidi"))
     if stray is not None:
         settings_el.remove(stray)
+
+
+def set_theme_font_lang(doc: Document, latin: str, bidi: str) -> None:
+    """Drop the python-docx shell default ``eastAsia=ja-JP`` and record the template languages."""
+    settings_el = doc.settings.element
+    el = settings_el.find(qn("w:themeFontLang"))
+    if el is None:
+        el = OxmlElement("w:themeFontLang")
+        settings_el.append(el)
+    el.set(qn("w:val"), latin)
+    el.set(qn("w:bidi"), bidi)
+    east_asia = qn("w:eastAsia")
+    if el.get(east_asia, "").lower().startswith("ja"):
+        del el.attrib[east_asia]
+
+
+def set_paragraph_style_id(paragraph: Paragraph, style_id: str) -> None:
+    pPr = paragraph._p.get_or_add_pPr()
+    el = pPr.find(qn("w:pStyle"))
+    if el is None:
+        el = OxmlElement("w:pStyle")
+        pPr.insert(0, el)
+    el.set(qn("w:val"), style_id)
+    reorder_children(pPr, PPR_CHILD_ORDER)
+
+
+def _ensure_paragraph_mark(p_el, *, cs_font: str, latin_font: str, bidi_lang: str, latin_lang: str) -> None:
+    pPr = p_el.find(qn("w:pPr"))
+    if pPr is None:
+        return
+    bidi = pPr.find(qn("w:bidi"))
+    if bidi is None:
+        return
+    rtl_on = bidi.get(qn("w:val"), "1") != "0"
+    rPr = pPr.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        pPr.append(rPr)
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        rFonts = OxmlElement("w:rFonts")
+        rPr.append(rFonts)
+    rFonts.set(qn("w:ascii"), latin_font)
+    rFonts.set(qn("w:hAnsi"), latin_font)
+    rFonts.set(qn("w:cs"), cs_font)
+    east_asia = qn("w:eastAsia")
+    if east_asia in rFonts.attrib:
+        del rFonts.attrib[east_asia]
+    rtl = rPr.find(qn("w:rtl"))
+    if rtl is None:
+        rtl = OxmlElement("w:rtl")
+        rPr.append(rtl)
+    rtl.set(qn("w:val"), "1" if rtl_on else "0")
+    lang = rPr.find(qn("w:lang"))
+    if lang is None:
+        lang = OxmlElement("w:lang")
+        rPr.append(lang)
+    lang.set(qn("w:val"), latin_lang)
+    lang.set(qn("w:bidi"), bidi_lang)
+    reorder_children(rPr, RPR_CHILD_ORDER)
+
+
+def normalize_markup_tree(root, *, cs_font: str, latin_font: str, bidi_lang: str, latin_lang: str) -> None:
+    """Reorder run/paragraph properties, merge identical runs, and mark paragraph direction."""
+    if root is None:
+        return
+    for fonts in root.iter(qn("w:rFonts")):
+        east_asia = qn("w:eastAsia")
+        if east_asia in fonts.attrib:
+            del fonts.attrib[east_asia]
+    for paragraph in root.iter(qn("w:p")):
+        coalesce_runs(paragraph)
+        _ensure_paragraph_mark(
+            paragraph,
+            cs_font=cs_font,
+            latin_font=latin_font,
+            bidi_lang=bidi_lang,
+            latin_lang=latin_lang,
+        )
+    for rPr in root.iter(qn("w:rPr")):
+        reorder_children(rPr, RPR_CHILD_ORDER)
+    for pPr in root.iter(qn("w:pPr")):
+        reorder_children(pPr, PPR_CHILD_ORDER)
+
+
+def normalize_document(doc: Document, *, cs_font: str, latin_font: str, bidi_lang: str, latin_lang: str) -> None:
+    """Apply :func:`normalize_markup_tree` to the body, headers, footers, styles, and footnotes."""
+    trees = [doc.element, doc.styles.element]
+    for rel in doc.part.rels.values():
+        reltype = getattr(rel, "reltype", "") or ""
+        if reltype.endswith("/header") or reltype.endswith("/footer") or reltype.endswith("/footnotes"):
+            element = getattr(rel.target_part, "element", None)
+            if element is not None:
+                trees.append(element)
+    for tree in trees:
+        normalize_markup_tree(
+            tree,
+            cs_font=cs_font,
+            latin_font=latin_font,
+            bidi_lang=bidi_lang,
+            latin_lang=latin_lang,
+        )

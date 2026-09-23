@@ -87,15 +87,13 @@ def next_footnote_id(part: Part) -> int:
     return max(ids) + 1 if ids else 1
 
 
-def add_footnote_reference(paragraph: Paragraph, footnote_id: int) -> None:
+def add_footnote_reference(paragraph: Paragraph, footnote_id: int):
+    """Append a footnote reference run and return it so the caller can set bidi on rPr."""
     r = paragraph.add_run()
-    rPr = r._r.get_or_add_rPr()
-    vert = OxmlElement("w:vertAlign")
-    vert.set(qn("w:val"), "superscript")
-    rPr.append(vert)
     ref = OxmlElement("w:footnoteReference")
     ref.set(qn("w:id"), str(footnote_id))
     r._r.append(ref)
+    return r
 
 
 class FootnoteContainer:
