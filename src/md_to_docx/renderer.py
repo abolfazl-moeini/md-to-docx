@@ -441,7 +441,9 @@ class DocxRenderer:
             return
         resolved_color = self._resolve_color(color_hex or self.template.colors.get("body", "2D2D2D"))
         role = getattr(self, "_font_role", None)
-        if font_name:
+        if force_ltr:
+            cs_font = self.body_font
+        elif font_name:
             cs_font = font_name
         elif role == "heading":
             cs_font = self.heading_font

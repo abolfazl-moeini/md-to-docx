@@ -95,9 +95,8 @@ def test_render_note_callout(renderer):
     tbl = renderer.render_callout("note", "نکتهٔ DBA", ["متن داخل کادر نکته"])
     xml = tbl._tbl.xml
     assert "<w:bidiVisual" in xml
-    # Header cell has primary_dark fill 4A156D and diamond icon
+    # Header cell has primary_dark fill 4A156D
     hdr_cell = tbl.cell(0, 0)
-    assert "◆" in hdr_cell.paragraphs[0].text
     assert "نکتهٔ DBA" in hdr_cell.paragraphs[0].text
     hdr_xml = hdr_cell._tc.xml
     assert 'w:fill="4A156D"' in hdr_xml

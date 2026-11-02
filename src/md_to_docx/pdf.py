@@ -361,10 +361,22 @@ def convert_docx_to_pdf(
         if font_dirs:
             valid_font_dirs = [str(d.resolve()) for d in font_dirs if d.is_dir()]
             if valid_font_dirs:
-                env["SAL_FONTPATH"] = os.pathsep.join(valid_font_dirs)
+                system_font_dirs = [
+                    Path("/System/Library/Fonts"),
+                    Path("/Library/Fonts"),
+                    Path.home() / "Library" / "Fonts",
+                    Path.home() / ".fonts",
+                    Path.home() / ".local" / "share" / "fonts",
+                    Path("/usr/share/fonts"),
+                    Path("/usr/local/share/fonts"),
+                ]
+                all_font_dirs = list(valid_font_dirs) + [
+                    str(p) for p in system_font_dirs if p.is_dir() and str(p) not in valid_font_dirs
+                ]
+                env["SAL_FONTPATH"] = os.pathsep.join(all_font_dirs)
                 try:
                     fc_dirs_xml = "\n".join(
-                        f"  <dir>{xml.sax.saxutils.escape(d)}</dir>" for d in valid_font_dirs
+                        f"  <dir>{xml.sax.saxutils.escape(d)}</dir>" for d in all_font_dirs
                     )
                     fc_content = (
                         '<?xml version="1.0"?>\n'

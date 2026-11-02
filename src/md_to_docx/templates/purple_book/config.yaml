@@ -49,7 +49,7 @@ callouts:
     classes:
     - note
     default_title: نکته
-    icon: ◆
+    icon: ""
     header_bg: primary_dark
     header_fg: on_primary
     body_bg: F7F3FB
@@ -81,7 +81,7 @@ callouts:
     classes:
     - lab
     default_title: یادداشت تمرین
-    icon: ◆
+    icon: ""
     header_bg: primary_dark
     header_fg: on_primary
     body_bg: F0F4F8
@@ -89,7 +89,7 @@ callouts:
     classes:
     - editorial
     default_title: پیشنهاد تصویر
-    icon: ◆
+    icon: ""
     header_bg: ECEFF1
     header_fg: caption
     body_bg: F8F9FA

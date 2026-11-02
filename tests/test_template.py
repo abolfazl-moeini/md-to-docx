@@ -14,7 +14,7 @@ def test_load_template_by_name():
     assert tmpl.colors["primary_dark"] == "4A156D"
     assert tmpl.colors["warning_bg"] == "FBF7F4"
     assert tmpl.colors["warning_title"] == "8B6914"
-    assert tmpl.callouts["note"]["icon"] == "◆"
+    assert tmpl.callouts["note"]["icon"] == ""
     assert tmpl.callouts["warning"]["icon"] == ""
     assert tmpl.tables["bidi_visual"] is True
     assert tmpl.code_block["theme"] == "friendly"

@@ -20,6 +20,7 @@ from md_to_docx.pandoc_json import ast_to_docx
 from md_to_docx.renderer import DocxRenderer
 from md_to_docx.options import GeneratorOptions
 from md_to_docx.fonts_embed import embed_fonts_in_docx, strip_embedded_fonts
+from md_to_docx.oxml import sanitize_docx_package
 import md_to_docx.pdf as _pdf_module
 from md_to_docx.pdf import (
     convert_docx_to_pdf,
@@ -297,6 +298,7 @@ def _render_stage_docx(
 
     # Save to staged DOCX file first
     renderer.doc.save(str(stage_docx))
+    sanitize_docx_package(stage_docx)
 
     # If font embedding is requested, embed font files into staged DOCX (V3-03); otherwise strip
     embedding_status = "referenced_only"

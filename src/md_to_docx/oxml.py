@@ -1,6 +1,8 @@
 """OOXML helpers for RTL, Complex Script (CS) fonts, bidiVisual tables, and borders."""
 
 from copy import deepcopy
+from pathlib import Path
+from typing import List, Union
 
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -612,19 +614,16 @@ def set_paragraph_keep(paragraph: Paragraph, keep_next: bool = False, keep_lines
 
 
 def set_doc_bidi(doc: Document, bidi: bool = True) -> None:
-    """Sets section-level bidi. w:bidi does not belong on word/settings.xml."""
+    """Sets section-level bidi as first child of sectPr. w:bidi does not belong on word/settings.xml."""
     for section in doc.sections:
         sectPr = section._sectPr
         existing = sectPr.find(qn("w:bidi"))
         if bidi:
-            if existing is None:
-                existing = OxmlElement("w:bidi")
-                docGrid = sectPr.find(qn("w:docGrid"))
-                if docGrid is not None:
-                    sectPr.insert(sectPr.index(docGrid), existing)
-                else:
-                    sectPr.append(existing)
+            if existing is not None:
+                sectPr.remove(existing)
+            existing = OxmlElement("w:bidi")
             existing.set(qn("w:val"), "1")
+            sectPr.insert(0, existing)
             gutter = sectPr.find(qn("w:rtlGutter"))
             if gutter is None:
                 gutter = OxmlElement("w:rtlGutter")
@@ -640,6 +639,62 @@ def set_doc_bidi(doc: Document, bidi: bool = True) -> None:
     stray = settings_el.find(qn("w:bidi"))
     if stray is not None:
         settings_el.remove(stray)
+
+
+def sanitize_docx_package(docx_path: str | Path) -> List[str]:
+    """Removes Word-for-Mac template artifacts (stylesWithEffects.xml, thumbnail.jpeg)
+    and cleans references from [Content_Types].xml and .rels files.
+    """
+    import zipfile, re, shutil
+    path_str = str(docx_path)
+    with zipfile.ZipFile(path_str, "r") as z:
+        items = {n: z.read(n) for n in z.namelist()}
+
+    mac_artifacts = ("word/stylesWithEffects.xml", "docProps/thumbnail.jpeg")
+    removed = [p for p in mac_artifacts if p in items]
+    if not removed:
+        return []
+
+    actions = []
+    for p in removed:
+        del items[p]
+        actions.append(f"removed {p}")
+
+    if "[Content_Types].xml" in items:
+        ct = items["[Content_Types].xml"].decode("utf-8")
+        before = ct
+        for p in removed:
+            ct = re.sub(r'<Override PartName="/' + re.escape(p) + r'"[^>]*/>', "", ct)
+        if "docProps/thumbnail.jpeg" in removed and not any(
+            n.lower().endswith((".jpeg", ".jpg")) for n in items
+        ):
+            ct = re.sub(r'<Default Extension="jpeg"[^>]*/>', "", ct)
+        if ct != before:
+            items["[Content_Types].xml"] = ct.encode("utf-8")
+            actions.append("cleaned [Content_Types].xml")
+
+    for name in list(items):
+        if not name.endswith(".rels"):
+            continue
+        rels = items[name].decode("utf-8")
+        before = rels
+        for p in removed:
+            target = p.split("/")[-1] if name.startswith("word/") else p
+            rels = re.sub(
+                r'<Relationship[^>]*Target="[^"]*' + re.escape(target) + r'"[^>]*/>', "", rels
+            )
+        if rels != before:
+            items[name] = rels.encode("utf-8")
+            actions.append(f"cleaned {name}")
+
+    tmp = path_str + ".tmp"
+    names = list(items)
+    names.sort(key=lambda n: n != "[Content_Types].xml")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as out:
+        for n in names:
+            out.writestr(n, items[n])
+    shutil.move(tmp, path_str)
+    return actions
 
 
 def set_theme_font_lang(doc: Document, latin: str, bidi: str) -> None:

@@ -21,6 +21,10 @@ npm-debug.log*
 .vscode/
 *.swp
 
+# IDE & Agent tooling
+.qoder/
+.workbuddy-ai/
+
 # Local conversion output (keep fixtures and examples)
 /out.docx
 /*.docx
